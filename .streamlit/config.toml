@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#2E7B5B"       # สีเขียวหลักของแบรนด์ (ปุ่ม Primary, กรอบเวลา Focus)
+backgroundColor = "#FFFFFF"    # สีพื้นหลังหลัก
+secondaryBackgroundColor = "#F0Fdf4" # สีพื้นหลังรอง (เช่น แถบ Sidebar ด้านข้าง ถ้ามี)
+textColor = "#1F2937"          # สีตัวอักษร (สีเทาเข้มเพื่อให้อ่านง่ายกว่าสีดำสนิท)
+font = "sans serif"
