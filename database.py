@@ -27,6 +27,8 @@ class Employee(Base):
     account_no = Column(String, nullable=True) # 🟢 เลขบัญชี
     is_active = Column(Boolean, default=True)
     is_sso = Column(Boolean, default=True)     # 🟢 หักประกันสังคม
+    service_type = Column(String, default="AUTO")
+    service_percent = Column(Float, default=100.0)
 
 # 💰 ตารางเก็บประวัติการจ่ายเงินเดือน
 class PayrollTransaction(Base):
@@ -71,3 +73,38 @@ class AccessLog(Base):
     user = Column(String, index=True)
     action = Column(String)
     timestamp = Column(String, index=True)
+
+# 🧾 ตารางตั้งค่า Service Charge รายเดือน (Phase 1: โครงสร้างเท่านั้น)
+class ServiceMonth(Base):
+    __tablename__ = "service_months"
+
+    id = Column(Integer, primary_key=True, index=True)
+    month = Column(String, index=True)
+    year = Column(Integer, index=True)
+    room_service = Column(Float, default=0.0)
+    fb_service = Column(Float, default=0.0)
+    zipline_service = Column(Float, default=0.0)
+    other_service = Column(Float, default=0.0)
+    note = Column(String, nullable=True)
+
+# 👥 ตาราง snapshot พนักงานที่เกี่ยวข้องกับ Service Charge
+class ServiceEmployee(Base):
+    __tablename__ = "service_employees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_month_id = Column(Integer, index=True)
+    emp_code = Column(String, index=True)
+    service_type = Column(String, default="AUTO")
+    service_percent = Column(Float, default=100.0)
+    fixed_amount = Column(Float, default=0.0)
+
+# 💳 ตารางเงินฝาก/รายการพักยอดของพนักงาน
+class EmployeeDeposit(Base):
+    __tablename__ = "employee_deposits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    emp_code = Column(String, index=True)
+    deposit_month = Column(String, index=True)
+    deposit_year = Column(Integer, index=True)
+    amount = Column(Float, default=0.0)
+    note = Column(String, nullable=True)

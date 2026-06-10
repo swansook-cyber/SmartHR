@@ -1,6 +1,6 @@
 ﻿from fastapi import FastAPI, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 import database as db
 from typing import List
 import datetime
@@ -9,6 +9,17 @@ app = FastAPI()
 
 # 🟢 บรรทัดนี้ช่วยสร้างตารางให้ใหม่ทันทีถ้าฐานข้อมูลหาย
 db.Base.metadata.create_all(bind=db.engine)
+
+def ensure_schema():
+    inspector = inspect(db.engine)
+    employee_columns = {col["name"] for col in inspector.get_columns("employees")}
+    with db.engine.begin() as conn:
+        if "service_type" not in employee_columns:
+            conn.execute(text("ALTER TABLE employees ADD COLUMN service_type VARCHAR DEFAULT 'AUTO'"))
+        if "service_percent" not in employee_columns:
+            conn.execute(text("ALTER TABLE employees ADD COLUMN service_percent FLOAT DEFAULT 100.0"))
+
+ensure_schema()
 
 def get_db():
     db_session = db.SessionLocal()
@@ -72,7 +83,9 @@ def get_all_employees(session: Session = Depends(get_db)):
             "base_salary": emp.base_salary,
             "account_no": emp.account_no,
             "is_active": emp.is_active,
-            "is_sso": emp.is_sso
+            "is_sso": emp.is_sso,
+            "service_type": emp.service_type or "AUTO",
+            "service_percent": emp.service_percent if emp.service_percent is not None else 100.0
         })
     return result
 
@@ -95,7 +108,9 @@ def create_employee(data: dict, session: Session = Depends(get_db)):
         tax_info=data.get("tax_info", ""),
         base_salary=float(data.get("base_salary", 0.0)),
         account_no=data.get("account_no", ""),
-        is_sso=data.get("is_sso", True)
+        is_sso=data.get("is_sso", True),
+        service_type=data.get("service_type", "AUTO"),
+        service_percent=float(data.get("service_percent", 100.0))
     )
     session.add(new_emp)
     session.commit()
@@ -119,6 +134,8 @@ def update_employee(emp_code: str, data: dict, session: Session = Depends(get_db
     if "is_active" in data: emp.is_active = data["is_active"]
     if "is_sso" in data: emp.is_sso = data["is_sso"]
     if "machine_id" in data: emp.machine_id = data["machine_id"]
+    if "service_type" in data: emp.service_type = data["service_type"]
+    if "service_percent" in data: emp.service_percent = float(data["service_percent"])
     
     session.commit()
     return {"message": "อัปเดตข้อมูลพนักงานสำเร็จ"}
@@ -155,6 +172,11 @@ def bulk_import_employees(employees: list = Body(...), session: Session = Depend
                 
                 existing_emp.account_no = str(emp_data.get("account_no", existing_emp.account_no))
                 if "is_sso" in emp_data: existing_emp.is_sso = bool(emp_data["is_sso"])
+                if "service_type" in emp_data and str(emp_data["service_type"]).strip():
+                    existing_emp.service_type = str(emp_data["service_type"]).strip().upper()
+                if "service_percent" in emp_data and str(emp_data["service_percent"]).strip() != "":
+                    try: existing_emp.service_percent = float(emp_data["service_percent"])
+                    except: pass
                 if "machine_id" in emp_data and str(emp_data["machine_id"]) not in ["nan", "", "-"]:
                     existing_emp.machine_id = str(emp_data["machine_id"])
                     
@@ -177,7 +199,9 @@ def bulk_import_employees(employees: list = Body(...), session: Session = Depend
                     tax_info=str(emp_data.get("tax_info", "-")),
                     base_salary=safe_salary,
                     account_no=str(emp_data.get("account_no", "-")),
-                    is_sso=bool(emp_data.get("is_sso", True))
+                    is_sso=bool(emp_data.get("is_sso", True)),
+                    service_type=str(emp_data.get("service_type", "AUTO")).strip().upper() or "AUTO",
+                    service_percent=float(emp_data.get("service_percent", 100.0) or 100.0)
                 )
                 if "machine_id" in emp_data and str(emp_data["machine_id"]) not in ["nan", "", "-"]:
                     new_emp.machine_id = str(emp_data["machine_id"])
@@ -191,6 +215,71 @@ def bulk_import_employees(employees: list = Body(...), session: Session = Depend
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
+
+# ==========================================
+# 🧾 ระบบ Service Charge (Beta / Phase 1)
+# ==========================================
+
+def serialize_service_month(item):
+    total_service = (
+        float(item.room_service or 0)
+        + float(item.fb_service or 0)
+        + float(item.zipline_service or 0)
+        + float(item.other_service or 0)
+    )
+    return {
+        "id": item.id,
+        "month": item.month,
+        "year": item.year,
+        "room_service": item.room_service or 0.0,
+        "fb_service": item.fb_service or 0.0,
+        "zipline_service": item.zipline_service or 0.0,
+        "other_service": item.other_service or 0.0,
+        "total_service": total_service,
+        "employee_pool": total_service * 0.60,
+        "welfare_fund": total_service * 0.20,
+        "resort_fund": total_service * 0.20,
+        "note": item.note or ""
+    }
+
+@app.get("/service/months")
+def get_service_months(session: Session = Depends(get_db)):
+    rows = session.query(db.ServiceMonth).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc()).all()
+    return [serialize_service_month(row) for row in rows]
+
+@app.get("/service/months/{year}/{month}")
+def get_service_month(year: int, month: str, session: Session = Depends(get_db)):
+    item = session.query(db.ServiceMonth).filter(
+        db.ServiceMonth.year == year,
+        db.ServiceMonth.month == month
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
+    return serialize_service_month(item)
+
+@app.post("/service/months")
+def upsert_service_month(data: dict, session: Session = Depends(get_db)):
+    month = str(data.get("month", "")).strip()
+    year = int(data.get("year", datetime.date.today().year))
+    if not month:
+        raise HTTPException(status_code=400, detail="กรุณาระบุเดือน")
+
+    item = session.query(db.ServiceMonth).filter(
+        db.ServiceMonth.year == year,
+        db.ServiceMonth.month == month
+    ).first()
+    if not item:
+        item = db.ServiceMonth(month=month, year=year)
+        session.add(item)
+
+    item.room_service = float(data.get("room_service", 0.0) or 0.0)
+    item.fb_service = float(data.get("fb_service", 0.0) or 0.0)
+    item.zipline_service = float(data.get("zipline_service", 0.0) or 0.0)
+    item.other_service = float(data.get("other_service", 0.0) or 0.0)
+    item.note = str(data.get("note", "") or "")
+    session.commit()
+    session.refresh(item)
+    return serialize_service_month(item)
 
 # ==========================================
 # 💰 ระบบประมวลผลเงินเดือน (Payroll)

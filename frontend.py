@@ -49,6 +49,73 @@ def record_log(action):
     except:
         pass
 
+def render_service_setup():
+    st.title("🧾 Service Charge (Beta)")
+    st.caption("Phase 1: ตั้งค่ายอดรวมรายเดือนและโครงสร้างกองทุน ยังไม่คำนวณแจกจ่ายให้พนักงาน")
+
+    month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    current_year = datetime.date.today().year
+
+    col_month, col_year = st.columns(2)
+    with col_month:
+        month = st.selectbox("Month", month_options, index=datetime.date.today().month - 1, key="service_month")
+    with col_year:
+        year = st.selectbox("Year", [str(y) for y in range(current_year, current_year + 6)], key="service_year")
+
+    existing = {}
+    try:
+        existing = api_get_json(f"/service/months/{year}/{month}")
+    except:
+        existing = {}
+
+    with st.form("service_setup_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            room_service = st.number_input("Room Service", min_value=0.0, step=1000.0, value=float(existing.get("room_service", 0.0)))
+            fb_service = st.number_input("F&B Service", min_value=0.0, step=1000.0, value=float(existing.get("fb_service", 0.0)))
+        with col2:
+            zipline_service = st.number_input("Zipline Service", min_value=0.0, step=1000.0, value=float(existing.get("zipline_service", 0.0)))
+            other_service = st.number_input("Other Service", min_value=0.0, step=1000.0, value=float(existing.get("other_service", 0.0)))
+        note = st.text_area("Note", value=existing.get("note", ""), height=80)
+
+        total_service = room_service + fb_service + zipline_service + other_service
+        st.markdown("---")
+        metric1, metric2, metric3, metric4 = st.columns(4)
+        with metric1: st.metric("Total Service", f"{total_service:,.2f}")
+        with metric2: st.metric("Employee Pool (60%)", f"{total_service * 0.60:,.2f}")
+        with metric3: st.metric("Welfare Fund (20%)", f"{total_service * 0.20:,.2f}")
+        with metric4: st.metric("Resort Fund (20%)", f"{total_service * 0.20:,.2f}")
+
+        if st.form_submit_button("💾 Save Service Setup", type="primary", use_container_width=True):
+            payload = {
+                "month": month,
+                "year": int(year),
+                "room_service": room_service,
+                "fb_service": fb_service,
+                "zipline_service": zipline_service,
+                "other_service": other_service,
+                "note": note
+            }
+            try:
+                res = requests.post(f"{API_URL}/service/months", json=payload, timeout=REQUEST_TIMEOUT)
+                if res.status_code == 200:
+                    clear_api_cache()
+                    st.success("✅ บันทึก Service Setup สำเร็จ")
+                    st.rerun()
+                else:
+                    st.error(f"❌ เกิดข้อผิดพลาด: {res.text}")
+            except Exception as e:
+                st.error(f"❌ ไม่สามารถเชื่อมต่อระบบหลังบ้านได้: {e}")
+
+    try:
+        history = api_get_json("/service/months")
+        if history:
+            st.markdown("---")
+            st.subheader("Service Setup History")
+            st.dataframe(pd.DataFrame(history), use_container_width=True)
+    except:
+        pass
+
 def apply_custom_css():
     st.markdown("""
     <style>
@@ -550,6 +617,11 @@ elif st.session_state["role"] == "admin":
     with col_logout:
         if st.button("🚪 ออกจากระบบ", use_container_width=True): st.session_state.clear(); st.rerun()
 
+    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)"])
+    if admin_menu == "Service Charge (Beta)":
+        render_service_setup()
+        st.stop()
+
     tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 0. ภาพรวมสถิติ", "👥 1. ฐานข้อมูลพนักงาน", "💰 2. ประมวลผลเงินเดือน", "📥 3. ออกเอกสารและรายงาน", "⏱️ 4. ประมวลผลเวลา (Check-in)", "📜 5. ประวัติการใช้งาน"])
 
     with tab0:
@@ -634,6 +706,8 @@ elif st.session_state["role"] == "admin":
                     base_salary = st.number_input("ฐานเงินเดือน", min_value=0.0, step=1000.0)
                     account_no = st.text_input("เลขที่บัญชี")
                     is_sso = st.checkbox("หักประกันสังคม", value=True)
+                    service_type = st.selectbox("Service Type", ["AUTO", "FIXED", "NONE"])
+                    service_percent = st.number_input("Service Percent", min_value=0.0, max_value=100.0, value=100.0, step=5.0)
                 
                 submit_btn = st.form_submit_button("💾 บันทึกข้อมูล")
                 if submit_btn:
@@ -653,7 +727,9 @@ elif st.session_state["role"] == "admin":
                             "tax_info": tax_info,
                             "base_salary": base_salary,
                             "account_no": account_no,
-                            "is_sso": is_sso
+                            "is_sso": is_sso,
+                            "service_type": service_type,
+                            "service_percent": service_percent
                         }
                         res = requests.post(f"{API_URL}/employees/", json=payload, timeout=REQUEST_TIMEOUT)
                         if res.status_code == 200:
@@ -663,7 +739,7 @@ elif st.session_state["role"] == "admin":
                             st.error(f"❌ เกิดข้อผิดพลาด: {res.text}")
 
         elif mode == "📊 นำเข้าจาก Excel":
-            st.info("💡 ไฟล์ Excel ควรมีคอลัมน์: emp_code, first_name, last_name, position, department, machine_id, phone, start_date, address, tax_info, base_salary, account_no")
+            st.info("💡 ไฟล์ Excel ควรมีคอลัมน์: emp_code, first_name, last_name, position, department, machine_id, phone, start_date, address, tax_info, base_salary, account_no, service_type, service_percent")
             uploaded_file = st.file_uploader("ลากไฟล์มาวาง", type=["xlsx", "csv"])
             if uploaded_file is not None:
                 df_bulk = read_uploaded_table(uploaded_file.name, uploaded_file.getvalue())
@@ -673,6 +749,8 @@ elif st.session_state["role"] == "admin":
                 if 'emp_code' in df_bulk.columns: df_bulk['emp_code'] = df_bulk['emp_code'].astype(str).str.replace(r'\.0$', '', regex=True)
                 if 'start_date' in df_bulk.columns: df_bulk['start_date'] = pd.to_datetime(df_bulk['start_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(str(datetime.date.today()))
                 if 'is_sso' not in df_bulk.columns: df_bulk['is_sso'] = True 
+                if 'service_type' not in df_bulk.columns: df_bulk['service_type'] = "AUTO"
+                if 'service_percent' not in df_bulk.columns: df_bulk['service_percent'] = 100.0
                 
                 if st.button("💾 ยืนยันการนำเข้าข้อมูล", type="primary"):
                     try:
@@ -721,6 +799,15 @@ elif st.session_state["role"] == "admin":
                         with col5: 
                             edit_account_no = st.text_input("เลขบัญชี", emp_data.get("account_no", ""))
                             edit_tax_info = st.text_input("ลดหย่อนภาษี", emp_data.get("tax_info", ""))
+
+                        col_service1, col_service2 = st.columns(2)
+                        service_options = ["AUTO", "FIXED", "NONE"]
+                        try: service_index = service_options.index(emp_data.get("service_type", "AUTO"))
+                        except: service_index = 0
+                        with col_service1:
+                            edit_service_type = st.selectbox("Service Type", service_options, index=service_index)
+                        with col_service2:
+                            edit_service_percent = st.number_input("Service Percent", value=float(emp_data.get("service_percent", 100.0)), min_value=0.0, max_value=100.0, step=5.0)
                             
                         if st.form_submit_button("🔄 อัปเดตข้อมูล", type="primary"):
                             update_payload = {
@@ -736,6 +823,8 @@ elif st.session_state["role"] == "admin":
                                 "account_no": edit_account_no, 
                                 "is_active": edit_status, 
                                 "is_sso": edit_sso,
+                                "service_type": edit_service_type,
+                                "service_percent": edit_service_percent,
                                 "start_date": str(edit_start_date) # 🟢 ส่งข้อมูลวันเริ่มงานกลับไป
                             }
                             res_update = requests.put(f"{API_URL}/employees/{emp_data['emp_code']}", json=update_payload, timeout=REQUEST_TIMEOUT)
