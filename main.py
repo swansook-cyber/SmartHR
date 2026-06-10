@@ -452,7 +452,7 @@ def serialize_service_employee(row):
         "notes": row.notes or ""
     }
 
-def serialize_service_slip(row, service_month):
+def serialize_service_slip(row, service_month, employee=None):
     return {
         "service_month_id": service_month.id,
         "service_month": f"{service_month.month}-{service_month.year}",
@@ -462,6 +462,8 @@ def serialize_service_slip(row, service_month):
         "first_name": row.first_name or "",
         "last_name": row.last_name or "",
         "department": row.department or "",
+        "service_eligibility_percent": round_baht(float(row.service_weight or 0) * 100),
+        "eligible_service_month": eligible_service_month_index(employee, service_month) if employee else "",
         "gross_service": row.gross_service or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
         "leave_hour_deduction": row.leave_hour_deduction or 0.0,
@@ -488,6 +490,42 @@ def service_summary(service_month, rows):
         "actual_employee_paid": actual_paid,
         "balance_returned_to_resort": round_baht(employee_pool - actual_paid),
         "exceeds_employee_pool": actual_paid > round_baht(employee_pool)
+    }
+
+def service_report_deduction_remarks(row):
+    remarks = []
+    if round_baht(row.get("sick_deduction", 0)) > 0:
+        remarks.append(f"Sick:{round_baht(row.get('sick_deduction', 0)):,.0f}")
+    if round_baht(row.get("leave_hour_deduction", 0)) > 0:
+        remarks.append(f"Leave Hour:{round_baht(row.get('leave_hour_deduction', 0)):,.0f}")
+    if round_baht(row.get("late_deduction", 0)) > 0:
+        remarks.append(f"Late:{round_baht(row.get('late_deduction', 0)):,.0f}")
+    if round_baht(row.get("evaluation_deduction", 0)) > 0:
+        remarks.append(f"Evaluation:{round_baht(row.get('evaluation_deduction', 0)):,.0f}")
+    return ", ".join(remarks)
+
+def serialize_service_detail_report(row, employee=None):
+    data = serialize_service_employee(row)
+    deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
+    total_after_deduction = round_baht(data.get("gross_service", 0)) - deduction_amount
+    notes = str(data.get("notes", "") or "").strip()
+    deduction_remarks = service_report_deduction_remarks(data)
+    remarks = ", ".join(part for part in [notes, deduction_remarks] if part)
+    return {
+        "emp_code": data.get("emp_code", ""),
+        "first_name": data.get("first_name", ""),
+        "last_name": data.get("last_name", ""),
+        "department": data.get("department", "") or "ไม่ระบุแผนก",
+        "position": data.get("position", "") or "",
+        "start_date": getattr(employee, "start_date", None) or "",
+        "service_percent": round_baht(float(data.get("service_weight", 0) or 0) * 100),
+        "income_amount": round_baht(data.get("gross_service", 0)),
+        "deduction_amount": deduction_amount,
+        "total_after_deduction": total_after_deduction,
+        "deposit_refund": 0,
+        "deposit_deduction": round_baht(data.get("deposit_deduction", 0)),
+        "net_service": round_baht(data.get("net_service", 0)),
+        "remarks": remarks
     }
 
 @app.get("/api/service/months")
@@ -738,7 +776,8 @@ def get_all_service_slips(session: Session = Depends(get_db)):
         db.ServiceMonth,
         db.ServiceEmployee.service_month_id == db.ServiceMonth.id
     ).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc(), db.ServiceEmployee.emp_code.asc()).all()
-    return [serialize_service_slip(row, service_month) for row, service_month in rows]
+    employees = {str(emp.emp_code): emp for emp in session.query(db.Employee).all()}
+    return [serialize_service_slip(row, service_month, employees.get(str(row.emp_code))) for row, service_month in rows]
 
 @app.get("/api/service/slips/{emp_code}")
 @app.get("/service/slips/{emp_code}")
@@ -749,7 +788,8 @@ def get_employee_service_slips(emp_code: str, session: Session = Depends(get_db)
     ).filter(
         db.ServiceEmployee.emp_code == emp_code
     ).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc()).all()
-    return [serialize_service_slip(row, service_month) for row, service_month in rows]
+    employee = session.query(db.Employee).filter(db.Employee.emp_code == emp_code).first()
+    return [serialize_service_slip(row, service_month, employee) for row, service_month in rows]
 
 @app.get("/api/service/reports/{service_month_id}")
 @app.get("/service/reports/{service_month_id}")
@@ -758,7 +798,12 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
     if not service_month:
         raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
 
-    rows = [serialize_service_employee(row) for row in session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).all()]
+    service_rows = session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).order_by(
+        db.ServiceEmployee.department.asc(),
+        db.ServiceEmployee.emp_code.asc()
+    ).all()
+    employees = {str(emp.emp_code): emp for emp in session.query(db.Employee).all()}
+    rows = [serialize_service_employee(row) for row in service_rows]
     distribution = {}
     for row in rows:
         amount = round_baht(row.get("net_service", 0))
@@ -781,6 +826,11 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
     summary = service_summary(service_month, rows)
     return {
         "summary": summary,
+        "service_month": serialize_service_month(service_month),
+        "service_detail": [
+            serialize_service_detail_report(row, employees.get(str(row.emp_code)))
+            for row in service_rows
+        ],
         "distribution_summary": distribution_summary,
         "total_employees": len(rows),
         "cash_preparation": cash_rows,

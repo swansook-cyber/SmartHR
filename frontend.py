@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import io
 import datetime
+import html
 from reportlab.lib.pagesizes import letter, A4, landscape
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
@@ -117,6 +118,237 @@ def service_cash_report(total_amount):
         remaining -= amount
     rows.append({"Denomination": "coins/remainder", "Quantity": remaining, "Amount": remaining})
     return rows
+
+def format_baht(value):
+    return f"{round_baht(value):,.0f}"
+
+def service_detail_report_html(reports, selected_month):
+    rows = reports.get("service_detail", [])
+    summary = reports.get("summary", {})
+    service_rate = round_baht(summary.get("service_rate", 0))
+    half_rate = round_baht(service_rate * 0.50)
+    full_rate = service_rate
+    title = f"Service Charge {selected_month['month']} {selected_month['year']}"
+    printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    columns = [
+        ("no", "No."),
+        ("name", "Name/Surname"),
+        ("position", "Position"),
+        ("start_date", "Starting Date"),
+        ("service_percent", "Service %"),
+        ("income_amount", "Income Amount"),
+        ("deduction_amount", "Deduction Amount"),
+        ("total_after_deduction", "Total After Deduction"),
+        ("deposit_refund", "Deposit Refund"),
+        ("deposit_deduction", "Deposit Deduction"),
+        ("net_service", "Net Service"),
+        ("remarks", "Remarks")
+    ]
+    numeric_columns = [
+        "income_amount", "deduction_amount", "total_after_deduction",
+        "deposit_refund", "deposit_deduction", "net_service"
+    ]
+    total_fields = numeric_columns
+
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row.get("department") or "ไม่ระบุแผนก", []).append(row)
+
+    body_rows = []
+    grand_totals = {field: 0 for field in total_fields}
+    employee_no = 1
+    for department, dept_rows in grouped.items():
+        body_rows.append(f"<tr class='dept-row'><td colspan='{len(columns)}'>แผนก: {html.escape(str(department))}</td></tr>")
+        dept_totals = {field: 0 for field in total_fields}
+        for row in dept_rows:
+            name = " ".join([str(row.get("first_name", "") or ""), str(row.get("last_name", "") or "")]).strip()
+            cells = []
+            for key, _label in columns:
+                if key == "no":
+                    cells.append(f"<td class='center'>{employee_no}</td>")
+                elif key == "name":
+                    cells.append(f"<td>{html.escape(name)}</td>")
+                elif key == "service_percent":
+                    cells.append(f"<td class='num'>{format_baht(row.get(key, 0))}%</td>")
+                elif key in numeric_columns:
+                    cells.append(f"<td class='num'>{format_baht(row.get(key, 0))}</td>")
+                else:
+                    cells.append(f"<td>{html.escape(str(row.get(key, '') or ''))}</td>")
+            body_rows.append("<tr>" + "".join(cells) + "</tr>")
+            for field in total_fields:
+                dept_totals[field] += round_baht(row.get(field, 0))
+                grand_totals[field] += round_baht(row.get(field, 0))
+            employee_no += 1
+
+        subtotal_cells = []
+        for key, _label in columns:
+            if key == "name":
+                subtotal_cells.append(f"<td class='subtotal-label'>TOTAL {html.escape(str(department))} ({len(dept_rows)} คน)</td>")
+            elif key in total_fields:
+                subtotal_cells.append(f"<td class='num subtotal'>{format_baht(dept_totals[key])}</td>")
+            elif key == "no":
+                subtotal_cells.append("<td></td>")
+            else:
+                subtotal_cells.append("<td></td>")
+        body_rows.append("<tr class='subtotal-row'>" + "".join(subtotal_cells) + "</tr>")
+
+    grand_cells = []
+    for key, _label in columns:
+        if key == "name":
+            grand_cells.append(f"<td class='subtotal-label'>GRAND TOTAL ({len(rows)} คน)</td>")
+        elif key in total_fields:
+            grand_cells.append(f"<td class='num subtotal'>{format_baht(grand_totals[key])}</td>")
+        elif key == "no":
+            grand_cells.append("<td></td>")
+        else:
+            grand_cells.append("<td></td>")
+
+    header_cells = "".join(f"<th>{html.escape(label)}</th>" for _key, label in columns)
+    signature_html = (
+        '<div class="signature-row">'
+        '<div>_________________<br>Prepared By (HR)</div>'
+        '<div>_________________<br>Checked By (ACC)</div>'
+        '<div>_________________<br>Checked By (GM)</div>'
+        '<div>_________________<br>Approved By (VP)</div>'
+        '<div>_________________<br>Authorized By (President)</div>'
+        '</div>'
+    )
+    return f"""
+    <style>
+        .service-print-actions {{
+            margin: 0.5rem 0 1rem 0;
+        }}
+        .service-report-print-btn {{
+            border: 1px solid #2f6f5e;
+            background: #2f6f5e;
+            color: white;
+            padding: 0.45rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }}
+        .service-report {{
+            background: white;
+            color: #111;
+            padding: 18px;
+            border: 1px solid #d8d8d8;
+            overflow-x: auto;
+            font-family: Arial, sans-serif;
+        }}
+        .service-report h2 {{
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: 0;
+        }}
+        .service-report h3 {{
+            margin: 2px 0 4px 0;
+            font-size: 17px;
+            font-weight: 500;
+        }}
+        .service-report .printed {{
+            font-size: 12px;
+            margin-bottom: 10px;
+        }}
+        .service-detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }}
+        .service-detail-table th,
+        .service-detail-table td {{
+            border-bottom: 1px solid #e2e2e2;
+            padding: 5px 4px;
+            vertical-align: top;
+        }}
+        .service-detail-table th {{
+            border-top: 1px solid #111;
+            border-bottom: 1px solid #111;
+            text-align: left;
+            font-weight: 700;
+        }}
+        .service-detail-table .num {{
+            text-align: right;
+            white-space: nowrap;
+        }}
+        .service-detail-table .center {{
+            text-align: center;
+        }}
+        .dept-row td {{
+            font-weight: 700;
+            background: #f3f6f5;
+            border-top: 1px solid #777;
+        }}
+        .subtotal-row td {{
+            font-weight: 700;
+            border-top: 1px solid #999;
+            border-bottom: 1px solid #999;
+        }}
+        .grand-total td {{
+            font-weight: 700;
+            border-top: 2px solid #111;
+            border-bottom: 3px double #111;
+        }}
+        .summary-block {{
+            margin-top: 18px;
+            font-size: 13px;
+            line-height: 1.7;
+        }}
+        .signature-row {{
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-top: 70px;
+            text-align: center;
+            font-size: 12px;
+        }}
+        @media print {{
+            body * {{
+                visibility: hidden;
+            }}
+            .service-report, .service-report * {{
+                visibility: visible;
+            }}
+            .service-report {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                border: 0;
+                padding: 0;
+                overflow: visible;
+            }}
+            .service-print-actions {{
+                display: none;
+            }}
+            @page {{
+                size: A4 landscape;
+                margin: 10mm;
+            }}
+        }}
+    </style>
+    <div class="service-print-actions">
+        <button class="service-report-print-btn" onclick="window.print()">Print Service Detail Report</button>
+    </div>
+    <div class="service-report">
+        <h2>AONANG FIORE RESORT</h2>
+        <h3>{html.escape(title)}</h3>
+        <div class="printed">Printed Date: {html.escape(printed_at)}</div>
+        <table class="service-detail-table">
+            <thead><tr>{header_cells}</tr></thead>
+            <tbody>
+                {''.join(body_rows)}
+                <tr class="grand-total">{''.join(grand_cells)}</tr>
+            </tbody>
+        </table>
+        <div class="summary-block">
+            <div>50% Service Rate: {format_baht(half_rate)} Baht</div>
+            <div>100% Service Rate: {format_baht(full_rate)} Baht</div>
+            <div>Total Employees: {len(rows)}</div>
+            <div>Actual Employee Paid: {format_baht(summary.get('actual_employee_paid', grand_totals['net_service']))} Baht</div>
+        </div>
+        {signature_html}
+    </div>
+    """
 
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
@@ -336,6 +568,9 @@ def render_service_setup():
             selected_report_month = service_options[selected_report_label]
             try:
                 reports = api_get_json(service_api_path(f"/reports/{selected_report_month['id']}"))
+                st.markdown("### Service Detail Report")
+                st.markdown(service_detail_report_html(reports, selected_report_month), unsafe_allow_html=True)
+
                 st.markdown("### Distribution Summary")
                 st.dataframe(pd.DataFrame(reports.get("distribution_summary", [])), use_container_width=True)
                 st.metric("Total Employees", reports.get("total_employees", 0))
@@ -874,18 +1109,26 @@ elif st.session_state["role"] == "employee":
                 with col2: st.metric("Total Deductions", f"{(my_service_data['sick_deduction'] + my_service_data['leave_hour_deduction'] + my_service_data['late_deduction'] + my_service_data['evaluation_deduction'] + my_service_data['deposit_deduction']):,.0f} บาท")
                 with col3: st.metric("Net Service", f"{my_service_data['net_service']:,.0f} บาท")
 
-                slip_rows = [
-                    {"รายการ": "Service Month", "ยอด": my_service_data["service_month"]},
-                    {"รายการ": "Gross Service", "ยอด": f"{my_service_data['gross_service']:,.0f}"},
-                    {"รายการ": "Sick Deduction", "ยอด": f"{my_service_data['sick_deduction']:,.0f}"},
-                    {"รายการ": "Leave Hour Deduction", "ยอด": f"{my_service_data['leave_hour_deduction']:,.0f}"},
-                    {"รายการ": "Late Deduction", "ยอด": f"{my_service_data['late_deduction']:,.0f}"},
-                    {"รายการ": "Evaluation Deduction", "ยอด": f"{my_service_data['evaluation_deduction']:,.0f}"},
-                    {"รายการ": "Deposit Deduction", "ยอด": f"{my_service_data['deposit_deduction']:,.0f}"},
-                    {"รายการ": "Net Service", "ยอด": f"{my_service_data['net_service']:,.0f}"},
-                    {"รายการ": "Notes", "ยอด": my_service_data.get("notes", "") or "-"}
+                deduction_items = [
+                    ("Sick Deduction", my_service_data.get("sick_deduction", 0)),
+                    ("Leave Hour Deduction", my_service_data.get("leave_hour_deduction", 0)),
+                    ("Late Deduction", my_service_data.get("late_deduction", 0)),
+                    ("Evaluation Deduction", my_service_data.get("evaluation_deduction", 0)),
+                    ("Deposit Deduction", my_service_data.get("deposit_deduction", 0))
                 ]
-                st.dataframe(pd.DataFrame(slip_rows), use_container_width=True)
+                non_zero_deductions = [f"{label}:{value:,.0f}" for label, value in deduction_items if value > 0]
+                deduction_text = ", ".join(non_zero_deductions) if non_zero_deductions else "No deductions"
+                remark_parts = [
+                    f"Service Eligibility:{my_service_data.get('service_eligibility_percent', 0):g}%",
+                    f"Eligible Service Month:{my_service_data.get('eligible_service_month', '-')}",
+                    f"Gross Service:{my_service_data['gross_service']:,.0f}",
+                    deduction_text,
+                    f"Net Service:{my_service_data['net_service']:,.0f}"
+                ]
+                if my_service_data.get("notes"):
+                    remark_parts.append(f"Notes:{my_service_data['notes']}")
+                st.markdown("**Remark**")
+                st.info(", ".join(remark_parts))
 
 # หน้าจอ Admin (เจ้าหน้าที่ HR)
 elif st.session_state["role"] == "admin":
