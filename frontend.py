@@ -212,12 +212,13 @@ def render_service_setup():
             service_rate = summary.get("service_rate", 0)
             if rows:
                 editor_columns = [
-                    "emp_code", "first_name", "last_name", "department", "start_date", "service_type",
+                    "emp_code", "employee_name", "department", "start_date", "service_type",
                     "service_percent", "eligible_service_month", "service_weight", "service_rate", "gross_service", "sick_days",
                     "sick_deduction", "evaluation_percent", "evaluation_deduction", "deposit_deduction",
                     "net_service", "notes"
                 ]
                 df_calc = pd.DataFrame(rows)
+                df_calc["employee_name"] = (df_calc.get("first_name", "").fillna("").astype(str) + " " + df_calc.get("last_name", "").fillna("").astype(str)).str.strip()
                 for col in editor_columns:
                     if col not in df_calc.columns:
                         df_calc[col] = ""
@@ -226,23 +227,53 @@ def render_service_setup():
                     use_container_width=True,
                     num_rows="fixed",
                     disabled=[
-                        "emp_code", "first_name", "last_name", "department", "start_date", "service_type",
+                        "emp_code", "employee_name", "department", "start_date", "service_type",
                         "service_percent", "eligible_service_month", "service_weight", "service_rate", "gross_service",
                         "sick_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={
+                        "emp_code": st.column_config.TextColumn("Employee Code"),
+                        "employee_name": st.column_config.TextColumn("Employee Name"),
+                        "department": st.column_config.TextColumn("Department"),
+                        "start_date": st.column_config.TextColumn("Start Date"),
+                        "service_type": st.column_config.TextColumn("Service Type"),
+                        "service_weight": st.column_config.NumberColumn("Service Weight", format="%.2f"),
+                        "service_rate": st.column_config.NumberColumn("Service Rate", format="%d"),
+                        "gross_service": st.column_config.NumberColumn("Gross Service", format="%d"),
                         "sick_days": st.column_config.NumberColumn("Sick Days", min_value=0.0, step=0.5),
+                        "sick_deduction": st.column_config.NumberColumn("Sick Deduction", format="%d"),
                         "evaluation_percent": st.column_config.NumberColumn("Evaluation Deduction %", min_value=0.0, max_value=100.0, step=1.0),
+                        "evaluation_deduction": st.column_config.NumberColumn("Evaluation Deduction", format="%d"),
                         "deposit_deduction": st.column_config.NumberColumn("Deposit Deduction", min_value=0.0, step=100.0),
+                        "net_service": st.column_config.NumberColumn("Net Service", format="%d"),
                         "notes": st.column_config.TextColumn("Notes")
                     },
                     key=f"service_calc_editor_{selected_month['id']}"
                 )
 
-                recalculated_rows = recalculate_service_rows(edited_df.to_dict(orient="records"), service_rate)
+                original_by_code = {str(row.get("emp_code")): row for row in rows}
+                edited_rows = []
+                for edited_row in edited_df.to_dict(orient="records"):
+                    source_row = dict(original_by_code.get(str(edited_row.get("emp_code")), {}))
+                    source_row.update(edited_row)
+                    edited_rows.append(source_row)
+
+                recalc_clicked = st.button("🔄 Recalculate", use_container_width=True)
+                recalculated_rows = recalculate_service_rows(edited_rows, service_rate)
+                if recalc_clicked:
+                    st.success("✅ Recalculated service deductions and net service")
+
                 actual_paid = sum(round_baht(row.get("net_service", 0)) for row in recalculated_rows)
                 employee_pool = round_baht(summary.get("employee_pool", 0))
                 balance_returned = employee_pool - actual_paid
+
+                st.dataframe(
+                    pd.DataFrame(recalculated_rows)[[
+                        "emp_code", "employee_name", "department", "gross_service", "sick_deduction",
+                        "evaluation_deduction", "deposit_deduction", "net_service", "notes"
+                    ]],
+                    use_container_width=True
+                )
 
                 st.markdown("---")
                 c1, c2, c3 = st.columns(3)
