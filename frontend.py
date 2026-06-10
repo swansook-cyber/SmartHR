@@ -213,7 +213,7 @@ def render_service_setup():
             if rows:
                 editor_columns = [
                     "emp_code", "first_name", "last_name", "department", "start_date", "service_type",
-                    "service_percent", "service_weight", "service_rate", "gross_service", "sick_days",
+                    "service_percent", "eligible_service_month", "service_weight", "service_rate", "gross_service", "sick_days",
                     "sick_deduction", "evaluation_percent", "evaluation_deduction", "deposit_deduction",
                     "net_service", "notes"
                 ]
@@ -227,7 +227,7 @@ def render_service_setup():
                     num_rows="fixed",
                     disabled=[
                         "emp_code", "first_name", "last_name", "department", "start_date", "service_type",
-                        "service_percent", "service_weight", "service_rate", "gross_service",
+                        "service_percent", "eligible_service_month", "service_weight", "service_rate", "gross_service",
                         "sick_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={

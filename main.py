@@ -290,11 +290,39 @@ def calculate_service_weight(emp, service_month):
     months_worked = (int(service_month.year) - start_date.year) * 12 + (month_number(service_month.month) - start_date.month) + 1
     if months_worked <= 0:
         return 0.0
-    if months_worked == 1 and start_date.day > 10:
+
+    if start_date.day <= 10:
+        if months_worked in [1, 2, 3]:
+            return 0.5
+        return 1.0
+
+    if months_worked == 1:
         return 0.0
-    if months_worked in [2, 3]:
+    if months_worked in [2, 3, 4]:
         return 0.5
     return 1.0
+
+def eligible_service_month_index(emp, service_month):
+    if str(emp.service_type or "AUTO").upper() == "NONE":
+        return 0
+
+    start_date = parse_date(emp.start_date)
+    if not start_date:
+        return 999
+
+    months_worked = (int(service_month.year) - start_date.year) * 12 + (month_number(service_month.month) - start_date.month) + 1
+    if months_worked <= 0:
+        return 0
+    if start_date.day <= 10:
+        return months_worked
+    return months_worked - 1
+
+def default_service_deposit(emp, service_month, service_weight):
+    if service_weight <= 0:
+        return 0
+    if eligible_service_month_index(emp, service_month) in [1, 2, 3]:
+        return 500
+    return 0
 
 def month_number(month_name):
     month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
@@ -424,7 +452,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
     for emp, existing, service_weight in base_rows:
         sick_days = existing.sick_days if existing else 0.0
         evaluation_percent = existing.evaluation_percent if existing else 0.0
-        deposit_deduction = existing.deposit_deduction if existing else 0.0
+        deposit_deduction = existing.deposit_deduction if existing else default_service_deposit(emp, service_month, service_weight)
         notes = existing.notes if existing else ""
         gross_service = round_baht(selected_rate * service_weight)
         sick_deduction = round_baht(gross_service / 30 * float(sick_days or 0))
@@ -441,6 +469,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "start_date": emp.start_date,
             "service_type": emp.service_type or "AUTO",
             "service_percent": emp.service_percent if emp.service_percent is not None else 100.0,
+            "eligible_service_month": eligible_service_month_index(emp, service_month),
             "service_weight": service_weight,
             "service_rate": selected_rate,
             "gross_service": gross_service,
