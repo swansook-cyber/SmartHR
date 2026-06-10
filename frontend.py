@@ -66,6 +66,11 @@ def recalculate_service_rows(rows, service_rate):
         sick_days = float(row.get("sick_days", 0) or 0)
         evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
         deposit_deduction = round_baht(row.get("deposit_deduction", 0))
+        prior_deposit_total = round_baht(row.get("prior_deposit_total", 0))
+        if service_weight <= 0 or prior_deposit_total >= 1500:
+            deposit_deduction = 0
+        else:
+            deposit_deduction = min(deposit_deduction, 1500 - prior_deposit_total)
         gross_service = round_baht(service_rate * service_weight)
         sick_deduction = round_baht(gross_service / 30 * sick_days)
         evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
@@ -213,7 +218,7 @@ def render_service_setup():
             if rows:
                 editor_columns = [
                     "emp_code", "employee_name", "department", "start_date", "service_type",
-                    "service_percent", "eligible_service_month", "service_weight", "service_rate", "gross_service", "sick_days",
+                    "service_percent", "eligible_service_month", "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
                     "sick_deduction", "evaluation_percent", "evaluation_deduction", "deposit_deduction",
                     "net_service", "notes"
                 ]
@@ -228,7 +233,7 @@ def render_service_setup():
                     num_rows="fixed",
                     disabled=[
                         "emp_code", "employee_name", "department", "start_date", "service_type",
-                        "service_percent", "eligible_service_month", "service_weight", "service_rate", "gross_service",
+                        "service_percent", "eligible_service_month", "prior_deposit_total", "service_weight", "service_rate", "gross_service",
                         "sick_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={
@@ -237,6 +242,7 @@ def render_service_setup():
                         "department": st.column_config.TextColumn("Department"),
                         "start_date": st.column_config.TextColumn("Start Date"),
                         "service_type": st.column_config.TextColumn("Service Type"),
+                        "prior_deposit_total": st.column_config.NumberColumn("Prior Deposit Total", format="%d"),
                         "service_weight": st.column_config.NumberColumn("Service Weight", format="%.2f"),
                         "service_rate": st.column_config.NumberColumn("Service Rate", format="%d"),
                         "gross_service": st.column_config.NumberColumn("Gross Service", format="%d"),

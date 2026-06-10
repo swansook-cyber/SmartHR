@@ -317,11 +317,32 @@ def eligible_service_month_index(emp, service_month):
         return months_worked
     return months_worked - 1
 
-def default_service_deposit(emp, service_month, service_weight):
+def service_month_key(service_month):
+    return (int(service_month.year or 0), month_number(service_month.month))
+
+def service_deposit_total_before(session, emp_code, service_month_id, current_service_month):
+    current_key = service_month_key(current_service_month)
+    rows = session.query(db.ServiceEmployee, db.ServiceMonth).join(
+        db.ServiceMonth,
+        db.ServiceEmployee.service_month_id == db.ServiceMonth.id
+    ).filter(
+        db.ServiceEmployee.emp_code == str(emp_code),
+        db.ServiceEmployee.service_month_id != service_month_id
+    ).all()
+
+    total = 0
+    for service_employee, service_month in rows:
+        if service_month_key(service_month) < current_key:
+            total += round_baht(service_employee.deposit_deduction or 0)
+    return total
+
+def default_service_deposit(emp, service_month, service_weight, prior_deposit_total=0):
     if service_weight <= 0:
         return 0
+    if prior_deposit_total >= 1500:
+        return 0
     if eligible_service_month_index(emp, service_month) in [1, 2, 3]:
-        return 500
+        return min(500, 1500 - prior_deposit_total)
     return 0
 
 def month_number(month_name):
@@ -452,7 +473,10 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
     for emp, existing, service_weight in base_rows:
         sick_days = existing.sick_days if existing else 0.0
         evaluation_percent = existing.evaluation_percent if existing else 0.0
-        deposit_deduction = existing.deposit_deduction if existing else default_service_deposit(emp, service_month, service_weight)
+        prior_deposit_total = service_deposit_total_before(session, emp.emp_code, service_month_id, service_month)
+        deposit_deduction = existing.deposit_deduction if existing else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
+        if service_weight <= 0:
+            deposit_deduction = 0
         notes = existing.notes if existing else ""
         gross_service = round_baht(selected_rate * service_weight)
         sick_deduction = round_baht(gross_service / 30 * float(sick_days or 0))
@@ -470,6 +494,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "service_type": emp.service_type or "AUTO",
             "service_percent": emp.service_percent if emp.service_percent is not None else 100.0,
             "eligible_service_month": eligible_service_month_index(emp, service_month),
+            "prior_deposit_total": prior_deposit_total,
             "service_weight": service_weight,
             "service_rate": selected_rate,
             "gross_service": gross_service,
@@ -498,13 +523,53 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
     manual_rate = data.get("manual_service_rate", None)
     service_month.manual_service_rate = None if manual_rate in [None, ""] else float(manual_rate)
 
-    rows = data.get("employees", [])
+    rows = []
+    for row in data.get("employees", []):
+        normalized = dict(row)
+        service_weight = float(normalized.get("service_weight", 0.0) or 0.0)
+        service_rate = round_baht(normalized.get("service_rate", 0.0))
+        gross_service = round_baht(service_rate * service_weight)
+        sick_days = float(normalized.get("sick_days", 0.0) or 0.0)
+        evaluation_percent = float(normalized.get("evaluation_percent", 0.0) or 0.0)
+        deposit_deduction = round_baht(normalized.get("deposit_deduction", 0.0))
+        prior_deposit_total = service_deposit_total_before(session, normalized.get("emp_code", ""), service_month_id, service_month)
+
+        if service_weight <= 0 or prior_deposit_total >= 1500:
+            deposit_deduction = 0
+        elif prior_deposit_total + deposit_deduction > 1500:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deposit deduction for {normalized.get('emp_code', '')} exceeds 1,500 Baht total"
+            )
+
+        sick_deduction = round_baht(gross_service / 30 * sick_days)
+        evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
+        net_service = max(0, round_baht(gross_service - sick_deduction - evaluation_deduction - deposit_deduction))
+
+        normalized.update({
+            "service_weight": service_weight,
+            "service_rate": service_rate,
+            "gross_service": gross_service,
+            "sick_days": sick_days,
+            "sick_deduction": sick_deduction,
+            "evaluation_percent": evaluation_percent,
+            "evaluation_deduction": evaluation_deduction,
+            "deposit_deduction": deposit_deduction,
+            "net_service": net_service
+        })
+        rows.append(normalized)
+
     summary = service_summary(service_month, rows)
     if summary["exceeds_employee_pool"]:
         raise HTTPException(status_code=400, detail="Actual Employee Paid exceeds Employee Pool")
 
     session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).delete()
     for row in rows:
+        deposit_deduction = round_baht(row.get("deposit_deduction", 0.0))
+        service_weight = float(row.get("service_weight", 0.0) or 0.0)
+        if service_weight <= 0:
+            deposit_deduction = 0
+
         service_employee = db.ServiceEmployee(
             service_month_id=service_month_id,
             emp_code=str(row.get("emp_code", "")),
@@ -521,7 +586,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             sick_deduction=round_baht(row.get("sick_deduction", 0.0)),
             evaluation_percent=float(row.get("evaluation_percent", 0.0) or 0.0),
             evaluation_deduction=round_baht(row.get("evaluation_deduction", 0.0)),
-            deposit_deduction=round_baht(row.get("deposit_deduction", 0.0)),
+            deposit_deduction=deposit_deduction,
             net_service=round_baht(row.get("net_service", 0.0)),
             notes=str(row.get("notes", "") or "")
         )
