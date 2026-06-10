@@ -14,6 +14,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 API_URL = "http://localhost:8000"
 REQUEST_TIMEOUT = 10
+SERVICE_API_PREFIX = "/api/service"
 
 st.set_page_config(page_title="Aonang Fiore HRMS", layout="wide", page_icon="🌴")
 
@@ -25,6 +26,9 @@ def api_get_json(path):
 
 def clear_api_cache():
     api_get_json.clear()
+
+def service_api_path(path=""):
+    return f"{SERVICE_API_PREFIX}{path}"
 
 @st.cache_data(show_spinner=False)
 def read_uploaded_table(file_name, file_bytes):
@@ -107,7 +111,7 @@ def render_service_setup():
     current_year = datetime.date.today().year
 
     try:
-        service_months = api_get_json("/service/months")
+        service_months = api_get_json(service_api_path("/months"))
     except:
         service_months = []
 
@@ -122,7 +126,7 @@ def render_service_setup():
 
         existing = {}
         try:
-            existing = api_get_json(f"/service/months/{year}/{month}")
+            existing = api_get_json(service_api_path(f"/months/{year}/{month}"))
         except:
             existing = {}
 
@@ -155,7 +159,7 @@ def render_service_setup():
                     "note": note
                 }
                 try:
-                    res = requests.post(f"{API_URL}/service/months", json=payload, timeout=REQUEST_TIMEOUT)
+                    res = requests.post(f"{API_URL}{service_api_path('/months')}", json=payload, timeout=REQUEST_TIMEOUT)
                     if res.status_code == 200:
                         clear_api_cache()
                         st.success("✅ บันทึก Service Setup สำเร็จ")
@@ -166,7 +170,7 @@ def render_service_setup():
                     st.error(f"❌ ไม่สามารถเชื่อมต่อระบบหลังบ้านได้: {e}")
 
         try:
-            history = api_get_json("/service/months")
+            history = api_get_json(service_api_path("/months"))
             if history:
                 st.markdown("---")
                 st.subheader("Service Setup History")
@@ -194,7 +198,7 @@ def render_service_setup():
             manual_rate_payload = manual_rate if manual_rate > 0 else None
 
             try:
-                preview_url = f"/service/calculate/{selected_month['id']}"
+                preview_url = service_api_path(f"/calculate/{selected_month['id']}")
                 if manual_rate_payload is not None:
                     preview_url += f"?manual_service_rate={manual_rate_payload}"
                 preview = api_get_json(preview_url)
@@ -256,7 +260,8 @@ def render_service_setup():
                 if st.button("💾 Save Service Calculation", type="primary", use_container_width=True, disabled=actual_paid > employee_pool):
                     payload = {"manual_service_rate": manual_rate_payload, "employees": recalculated_rows}
                     try:
-                        res = requests.post(f"{API_URL}/service/calculate/{selected_month['id']}/save", json=payload, timeout=REQUEST_TIMEOUT)
+                        save_path = service_api_path(f"/calculate/{selected_month['id']}/save")
+                        res = requests.post(f"{API_URL}{save_path}", json=payload, timeout=REQUEST_TIMEOUT)
                         if res.status_code == 200:
                             clear_api_cache()
                             st.success(res.json()["message"])
@@ -275,7 +280,7 @@ def render_service_setup():
             selected_report_label = st.selectbox("Select Service Month", list(service_options.keys()), key="report_service_month")
             selected_report_month = service_options[selected_report_label]
             try:
-                reports = api_get_json(f"/service/reports/{selected_report_month['id']}")
+                reports = api_get_json(service_api_path(f"/reports/{selected_report_month['id']}"))
                 st.markdown("### Distribution Summary")
                 st.dataframe(pd.DataFrame(reports.get("distribution_summary", [])), use_container_width=True)
                 st.metric("Total Employees", reports.get("total_employees", 0))

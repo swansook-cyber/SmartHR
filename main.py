@@ -345,11 +345,13 @@ def service_summary(service_month, rows):
         "exceeds_employee_pool": actual_paid > round_baht(employee_pool)
     }
 
+@app.get("/api/service/months")
 @app.get("/service/months")
 def get_service_months(session: Session = Depends(get_db)):
     rows = session.query(db.ServiceMonth).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc()).all()
     return [serialize_service_month(row) for row in rows]
 
+@app.get("/api/service/months/{year}/{month}")
 @app.get("/service/months/{year}/{month}")
 def get_service_month(year: int, month: str, session: Session = Depends(get_db)):
     item = session.query(db.ServiceMonth).filter(
@@ -360,6 +362,7 @@ def get_service_month(year: int, month: str, session: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
     return serialize_service_month(item)
 
+@app.post("/api/service/months")
 @app.post("/service/months")
 def upsert_service_month(data: dict, session: Session = Depends(get_db)):
     month = str(data.get("month", "")).strip()
@@ -386,6 +389,7 @@ def upsert_service_month(data: dict, session: Session = Depends(get_db)):
     session.refresh(item)
     return serialize_service_month(item)
 
+@app.get("/api/service/calculate/{service_month_id}")
 @app.get("/service/calculate/{service_month_id}")
 def preview_service_calculation(service_month_id: int, manual_service_rate: float | None = None, session: Session = Depends(get_db)):
     service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
@@ -455,6 +459,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         "employees": rows
     }
 
+@app.post("/api/service/calculate/{service_month_id}/save")
 @app.post("/service/calculate/{service_month_id}/save")
 def save_service_calculation(service_month_id: int, data: dict, session: Session = Depends(get_db)):
     service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
@@ -496,6 +501,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
     session.commit()
     return {"message": "บันทึก Service Calculation สำเร็จ", "summary": summary}
 
+@app.get("/api/service/employees/{service_month_id}")
 @app.get("/service/employees/{service_month_id}")
 def get_service_employees(service_month_id: int, session: Session = Depends(get_db)):
     rows = session.query(db.ServiceEmployee).filter(
@@ -503,6 +509,7 @@ def get_service_employees(service_month_id: int, session: Session = Depends(get_
     ).order_by(db.ServiceEmployee.department.asc(), db.ServiceEmployee.emp_code.asc()).all()
     return [serialize_service_employee(row) for row in rows]
 
+@app.get("/api/service/reports/{service_month_id}")
 @app.get("/service/reports/{service_month_id}")
 def get_service_reports(service_month_id: int, session: Session = Depends(get_db)):
     service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
