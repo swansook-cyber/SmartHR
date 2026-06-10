@@ -64,6 +64,8 @@ def recalculate_service_rows(rows, service_rate):
     for row in rows:
         service_weight = float(row.get("service_weight", 0) or 0)
         sick_days = float(row.get("sick_days", 0) or 0)
+        leave_hours = float(row.get("leave_hours", 0) or 0)
+        late_hours = float(row.get("late_hours", 0) or 0)
         evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
         deposit_deduction = round_baht(row.get("deposit_deduction", 0))
         prior_deposit_total = round_baht(row.get("prior_deposit_total", 0))
@@ -73,14 +75,20 @@ def recalculate_service_rows(rows, service_rate):
             deposit_deduction = min(deposit_deduction, 1500 - prior_deposit_total)
         gross_service = round_baht(service_rate * service_weight)
         sick_deduction = round_baht(gross_service / 30 * sick_days)
+        leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
+        late_deduction = round_baht(gross_service * late_hours * 0.10) if late_hours <= 5 else gross_service
         evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
-        net_service = max(0, round_baht(gross_service - sick_deduction - evaluation_deduction - deposit_deduction))
+        net_service = max(0, round_baht(gross_service - sick_deduction - leave_hour_deduction - late_deduction - evaluation_deduction - deposit_deduction))
         new_row = dict(row)
         new_row.update({
             "service_rate": round_baht(service_rate),
             "gross_service": gross_service,
             "sick_days": sick_days,
             "sick_deduction": sick_deduction,
+            "leave_hours": leave_hours,
+            "leave_hour_deduction": leave_hour_deduction,
+            "late_hours": late_hours,
+            "late_deduction": late_deduction,
             "evaluation_percent": evaluation_percent,
             "evaluation_deduction": evaluation_deduction,
             "deposit_deduction": deposit_deduction,
@@ -219,7 +227,8 @@ def render_service_setup():
                 editor_columns = [
                     "emp_code", "employee_name", "department", "start_date", "service_type",
                     "service_percent", "eligible_service_month", "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
-                    "sick_deduction", "evaluation_percent", "evaluation_deduction", "deposit_deduction",
+                    "sick_deduction", "leave_hours", "leave_hour_deduction", "late_hours", "late_deduction",
+                    "evaluation_percent", "evaluation_deduction", "deposit_deduction",
                     "net_service", "notes"
                 ]
                 df_calc = pd.DataFrame(rows)
@@ -234,7 +243,7 @@ def render_service_setup():
                     disabled=[
                         "emp_code", "employee_name", "department", "start_date", "service_type",
                         "service_percent", "eligible_service_month", "prior_deposit_total", "service_weight", "service_rate", "gross_service",
-                        "sick_deduction", "evaluation_deduction", "net_service"
+                        "sick_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={
                         "emp_code": st.column_config.TextColumn("Employee Code"),
@@ -248,6 +257,10 @@ def render_service_setup():
                         "gross_service": st.column_config.NumberColumn("Gross Service", format="%d"),
                         "sick_days": st.column_config.NumberColumn("Sick Days", min_value=0.0, step=0.5),
                         "sick_deduction": st.column_config.NumberColumn("Sick Deduction", format="%d"),
+                        "leave_hours": st.column_config.NumberColumn("Leave Hours", min_value=0.0, step=0.5),
+                        "leave_hour_deduction": st.column_config.NumberColumn("Leave Hour Deduction", format="%d"),
+                        "late_hours": st.column_config.NumberColumn("Late Hours", min_value=0.0, step=0.5),
+                        "late_deduction": st.column_config.NumberColumn("Late Deduction", format="%d"),
                         "evaluation_percent": st.column_config.NumberColumn("Evaluation Deduction %", min_value=0.0, max_value=100.0, step=1.0),
                         "evaluation_deduction": st.column_config.NumberColumn("Evaluation Deduction", format="%d"),
                         "deposit_deduction": st.column_config.NumberColumn("Deposit Deduction", min_value=0.0, step=100.0),
@@ -276,7 +289,7 @@ def render_service_setup():
                 st.dataframe(
                     pd.DataFrame(recalculated_rows)[[
                         "emp_code", "employee_name", "department", "gross_service", "sick_deduction",
-                        "evaluation_deduction", "deposit_deduction", "net_service", "notes"
+                        "leave_hour_deduction", "late_deduction", "evaluation_deduction", "deposit_deduction", "net_service", "notes"
                     ]],
                     use_container_width=True
                 )

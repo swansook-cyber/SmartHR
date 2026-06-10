@@ -37,6 +37,10 @@ def ensure_schema():
             add_column_if_missing(conn, "service_employees", service_employee_columns, "gross_service", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_days", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_deduction", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_hours", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_hour_deduction", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "late_hours", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "late_deduction", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "evaluation_percent", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "evaluation_deduction", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "deposit_deduction", "FLOAT DEFAULT 0.0")
@@ -345,6 +349,48 @@ def default_service_deposit(emp, service_month, service_weight, prior_deposit_to
         return min(500, 1500 - prior_deposit_total)
     return 0
 
+def calculate_late_deduction(gross_service, late_hours):
+    late_hours = float(late_hours or 0)
+    if late_hours <= 0:
+        return 0
+    if late_hours <= 5:
+        return round_baht(float(gross_service or 0) * late_hours * 0.10)
+    return round_baht(gross_service)
+
+def calculate_service_amounts(row):
+    gross_service = round_baht(row.get("gross_service", 0))
+    sick_days = float(row.get("sick_days", 0) or 0)
+    leave_hours = float(row.get("leave_hours", 0) or 0)
+    late_hours = float(row.get("late_hours", 0) or 0)
+    evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
+    deposit_deduction = round_baht(row.get("deposit_deduction", 0))
+
+    sick_deduction = round_baht(gross_service / 30 * sick_days)
+    leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
+    late_deduction = calculate_late_deduction(gross_service, late_hours)
+    evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
+    net_service = max(
+        0,
+        round_baht(
+            gross_service
+            - sick_deduction
+            - leave_hour_deduction
+            - late_deduction
+            - evaluation_deduction
+            - deposit_deduction
+        )
+    )
+
+    return {
+        "sick_deduction": sick_deduction,
+        "leave_hours": leave_hours,
+        "leave_hour_deduction": leave_hour_deduction,
+        "late_hours": late_hours,
+        "late_deduction": late_deduction,
+        "evaluation_deduction": evaluation_deduction,
+        "net_service": net_service
+    }
+
 def month_number(month_name):
     month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     try:
@@ -369,6 +415,10 @@ def serialize_service_employee(row):
         "gross_service": row.gross_service or 0.0,
         "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
+        "leave_hours": row.leave_hours or 0.0,
+        "leave_hour_deduction": row.leave_hour_deduction or 0.0,
+        "late_hours": row.late_hours or 0.0,
+        "late_deduction": row.late_deduction or 0.0,
         "evaluation_percent": row.evaluation_percent or 0.0,
         "evaluation_deduction": row.evaluation_deduction or 0.0,
         "deposit_deduction": row.deposit_deduction or 0.0,
@@ -472,6 +522,8 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
     rows = []
     for emp, existing, service_weight in base_rows:
         sick_days = existing.sick_days if existing else 0.0
+        leave_hours = existing.leave_hours if existing else 0.0
+        late_hours = existing.late_hours if existing else 0.0
         evaluation_percent = existing.evaluation_percent if existing else 0.0
         prior_deposit_total = service_deposit_total_before(session, emp.emp_code, service_month_id, service_month)
         deposit_deduction = existing.deposit_deduction if existing else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
@@ -479,11 +531,14 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             deposit_deduction = 0
         notes = existing.notes if existing else ""
         gross_service = round_baht(selected_rate * service_weight)
-        sick_deduction = round_baht(gross_service / 30 * float(sick_days or 0))
-        evaluation_deduction = round_baht(gross_service * float(evaluation_percent or 0) / 100)
-        net_service = round_baht(gross_service - sick_deduction - evaluation_deduction - float(deposit_deduction or 0))
-        if net_service < 0:
-            net_service = 0
+        amounts = calculate_service_amounts({
+            "gross_service": gross_service,
+            "sick_days": sick_days,
+            "leave_hours": leave_hours,
+            "late_hours": late_hours,
+            "evaluation_percent": evaluation_percent,
+            "deposit_deduction": deposit_deduction
+        })
         rows.append({
             "emp_code": emp.emp_code,
             "first_name": emp.first_name,
@@ -499,11 +554,15 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "service_rate": selected_rate,
             "gross_service": gross_service,
             "sick_days": sick_days or 0.0,
-            "sick_deduction": sick_deduction,
+            "sick_deduction": amounts["sick_deduction"],
+            "leave_hours": amounts["leave_hours"],
+            "leave_hour_deduction": amounts["leave_hour_deduction"],
+            "late_hours": amounts["late_hours"],
+            "late_deduction": amounts["late_deduction"],
             "evaluation_percent": evaluation_percent or 0.0,
-            "evaluation_deduction": evaluation_deduction,
+            "evaluation_deduction": amounts["evaluation_deduction"],
             "deposit_deduction": round_baht(deposit_deduction or 0),
-            "net_service": net_service,
+            "net_service": amounts["net_service"],
             "notes": notes or ""
         })
 
@@ -530,6 +589,8 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         service_rate = round_baht(normalized.get("service_rate", 0.0))
         gross_service = round_baht(service_rate * service_weight)
         sick_days = float(normalized.get("sick_days", 0.0) or 0.0)
+        leave_hours = float(normalized.get("leave_hours", 0.0) or 0.0)
+        late_hours = float(normalized.get("late_hours", 0.0) or 0.0)
         evaluation_percent = float(normalized.get("evaluation_percent", 0.0) or 0.0)
         deposit_deduction = round_baht(normalized.get("deposit_deduction", 0.0))
         prior_deposit_total = service_deposit_total_before(session, normalized.get("emp_code", ""), service_month_id, service_month)
@@ -542,20 +603,29 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
                 detail=f"Deposit deduction for {normalized.get('emp_code', '')} exceeds 1,500 Baht total"
             )
 
-        sick_deduction = round_baht(gross_service / 30 * sick_days)
-        evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
-        net_service = max(0, round_baht(gross_service - sick_deduction - evaluation_deduction - deposit_deduction))
+        amounts = calculate_service_amounts({
+            "gross_service": gross_service,
+            "sick_days": sick_days,
+            "leave_hours": leave_hours,
+            "late_hours": late_hours,
+            "evaluation_percent": evaluation_percent,
+            "deposit_deduction": deposit_deduction
+        })
 
         normalized.update({
             "service_weight": service_weight,
             "service_rate": service_rate,
             "gross_service": gross_service,
             "sick_days": sick_days,
-            "sick_deduction": sick_deduction,
+            "sick_deduction": amounts["sick_deduction"],
+            "leave_hours": amounts["leave_hours"],
+            "leave_hour_deduction": amounts["leave_hour_deduction"],
+            "late_hours": amounts["late_hours"],
+            "late_deduction": amounts["late_deduction"],
             "evaluation_percent": evaluation_percent,
-            "evaluation_deduction": evaluation_deduction,
+            "evaluation_deduction": amounts["evaluation_deduction"],
             "deposit_deduction": deposit_deduction,
-            "net_service": net_service
+            "net_service": amounts["net_service"]
         })
         rows.append(normalized)
 
@@ -584,6 +654,10 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             gross_service=round_baht(row.get("gross_service", 0.0)),
             sick_days=float(row.get("sick_days", 0.0) or 0.0),
             sick_deduction=round_baht(row.get("sick_deduction", 0.0)),
+            leave_hours=float(row.get("leave_hours", 0.0) or 0.0),
+            leave_hour_deduction=round_baht(row.get("leave_hour_deduction", 0.0)),
+            late_hours=float(row.get("late_hours", 0.0) or 0.0),
+            late_deduction=round_baht(row.get("late_deduction", 0.0)),
             evaluation_percent=float(row.get("evaluation_percent", 0.0) or 0.0),
             evaluation_deduction=round_baht(row.get("evaluation_deduction", 0.0)),
             deposit_deduction=deposit_deduction,
