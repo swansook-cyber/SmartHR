@@ -22,6 +22,10 @@ def ensure_schema():
         add_column_if_missing(conn, "employees", employee_columns, "service_type", "VARCHAR DEFAULT 'AUTO'")
         add_column_if_missing(conn, "employees", employee_columns, "service_percent", "FLOAT DEFAULT 100.0")
 
+        if "payroll_transactions" in inspector.get_table_names():
+            payroll_columns = {col["name"] for col in inspector.get_columns("payroll_transactions")}
+            add_column_if_missing(conn, "payroll_transactions", payroll_columns, "sick_days", "FLOAT DEFAULT 0.0")
+
         if "service_months" in inspector.get_table_names():
             service_month_columns = {col["name"] for col in inspector.get_columns("service_months")}
             add_column_if_missing(conn, "service_months", service_month_columns, "manual_service_rate", "FLOAT")
@@ -37,6 +41,7 @@ def ensure_schema():
             add_column_if_missing(conn, "service_employees", service_employee_columns, "gross_service", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_days", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_deduction", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_days", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_hours", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_hour_deduction", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "late_hours", "FLOAT DEFAULT 0.0")
@@ -324,6 +329,26 @@ def eligible_service_month_index(emp, service_month):
 def service_month_key(service_month):
     return (int(service_month.year or 0), month_number(service_month.month))
 
+def service_payroll_cycle_name(service_month):
+    return f"{service_month.month}-{service_month.year}"
+
+def payroll_service_inputs(session, service_month):
+    cycle_name = service_payroll_cycle_name(service_month)
+    rows = session.query(db.PayrollTransaction).filter(
+        db.PayrollTransaction.cycle_name == cycle_name
+    ).all()
+
+    return {
+        str(row.emp_code): {
+            "sick_days": float(row.sick_days or 0),
+            "leave_days": float(row.unpaid_leave_days or 0),
+            "leave_hours": float(row.leave_hours or 0),
+            "late_hours": float(row.late_mins or 0) / 60,
+            "source": "Imported from Payroll"
+        }
+        for row in rows
+    }
+
 def service_deposit_total_before(session, emp_code, service_month_id, current_service_month):
     current_key = service_month_key(current_service_month)
     rows = session.query(db.ServiceEmployee, db.ServiceMonth).join(
@@ -415,6 +440,7 @@ def serialize_service_employee(row):
         "gross_service": row.gross_service or 0.0,
         "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
+        "leave_days": row.leave_days or 0.0,
         "leave_hours": row.leave_hours or 0.0,
         "leave_hour_deduction": row.leave_hour_deduction or 0.0,
         "late_hours": row.late_hours or 0.0,
@@ -506,6 +532,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         row.emp_code: row
         for row in session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).all()
     }
+    payroll_inputs = payroll_service_inputs(session, service_month)
 
     base_rows = []
     total_weight = 0.0
@@ -521,9 +548,11 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
 
     rows = []
     for emp, existing, service_weight in base_rows:
-        sick_days = existing.sick_days if existing else 0.0
-        leave_hours = existing.leave_hours if existing else 0.0
-        late_hours = existing.late_hours if existing else 0.0
+        payroll_input = payroll_inputs.get(str(emp.emp_code), {})
+        sick_days = existing.sick_days if existing else payroll_input.get("sick_days", 0.0)
+        leave_days = existing.leave_days if existing else payroll_input.get("leave_days", 0.0)
+        leave_hours = existing.leave_hours if existing else payroll_input.get("leave_hours", 0.0)
+        late_hours = existing.late_hours if existing else payroll_input.get("late_hours", 0.0)
         evaluation_percent = existing.evaluation_percent if existing else 0.0
         prior_deposit_total = service_deposit_total_before(session, emp.emp_code, service_month_id, service_month)
         deposit_deduction = existing.deposit_deduction if existing else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
@@ -555,6 +584,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "gross_service": gross_service,
             "sick_days": sick_days or 0.0,
             "sick_deduction": amounts["sick_deduction"],
+            "leave_days": leave_days or 0.0,
             "leave_hours": amounts["leave_hours"],
             "leave_hour_deduction": amounts["leave_hour_deduction"],
             "late_hours": amounts["late_hours"],
@@ -563,6 +593,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "evaluation_deduction": amounts["evaluation_deduction"],
             "deposit_deduction": round_baht(deposit_deduction or 0),
             "net_service": amounts["net_service"],
+            "source": payroll_input.get("source", ""),
             "notes": notes or ""
         })
 
@@ -589,6 +620,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         service_rate = round_baht(normalized.get("service_rate", 0.0))
         gross_service = round_baht(service_rate * service_weight)
         sick_days = float(normalized.get("sick_days", 0.0) or 0.0)
+        leave_days = float(normalized.get("leave_days", 0.0) or 0.0)
         leave_hours = float(normalized.get("leave_hours", 0.0) or 0.0)
         late_hours = float(normalized.get("late_hours", 0.0) or 0.0)
         evaluation_percent = float(normalized.get("evaluation_percent", 0.0) or 0.0)
@@ -618,6 +650,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             "gross_service": gross_service,
             "sick_days": sick_days,
             "sick_deduction": amounts["sick_deduction"],
+            "leave_days": leave_days,
             "leave_hours": amounts["leave_hours"],
             "leave_hour_deduction": amounts["leave_hour_deduction"],
             "late_hours": amounts["late_hours"],
@@ -654,6 +687,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             gross_service=round_baht(row.get("gross_service", 0.0)),
             sick_days=float(row.get("sick_days", 0.0) or 0.0),
             sick_deduction=round_baht(row.get("sick_deduction", 0.0)),
+            leave_days=float(row.get("leave_days", 0.0) or 0.0),
             leave_hours=float(row.get("leave_hours", 0.0) or 0.0),
             leave_hour_deduction=round_baht(row.get("leave_hour_deduction", 0.0)),
             late_hours=float(row.get("late_hours", 0.0) or 0.0),
@@ -738,7 +772,7 @@ def get_payroll_by_cycle(cycle_name: str, session: Session = Depends(get_db)):
             "base_salary": t.base_salary, "ot_15_hours": t.ot_15_hours, "ot_15_amount": t.ot_15_amount,
             "ot_1_hours": t.ot_1_hours, "ot_1_amount": t.ot_1_amount, "ot_amount": t.ot_amount,
             "other_benefits": t.other_benefits, "backpay": t.backpay, "gross_salary": t.gross_salary,
-            "late_mins": t.late_mins, "unpaid_leave_days": t.unpaid_leave_days, "leave_hours": t.leave_hours,
+            "late_mins": t.late_mins, "sick_days": t.sick_days, "unpaid_leave_days": t.unpaid_leave_days, "leave_hours": t.leave_hours,
             "leave_deduction": t.leave_deduction, "company_loan": t.company_loan, "student_loan": t.student_loan,
             "sso_deduction": t.sso_deduction, "net_salary": t.net_salary
         })
@@ -784,6 +818,7 @@ def calculate_payroll(data: dict, session: Session = Depends(get_db)):
         gross_salary = emp.base_salary + total_ot + other_ben + backpay
         
         late_mins = float(td.get("late_mins", 0))
+        sick_days = float(td.get("sick_days", 0))
         absent_days = float(td.get("absent_days", 0))
         leave_hrs = float(td.get("leave_hours", 0))
         
@@ -820,7 +855,7 @@ def calculate_payroll(data: dict, session: Session = Depends(get_db)):
             ot_15_hours=ot_15_hrs, ot_15_amount=ot_15_amt, ot_1_hours=ot_1_hrs,
             ot_1_amount=ot_1_amt, ot_amount=total_ot, other_benefits=other_ben,
             backpay=backpay, gross_salary=gross_salary, late_mins=late_mins,
-            unpaid_leave_days=absent_days, leave_hours=leave_hrs, leave_deduction=total_leave_deduct,
+            sick_days=sick_days, unpaid_leave_days=absent_days, leave_hours=leave_hrs, leave_deduction=total_leave_deduct,
             company_loan=comp_loan, student_loan=student_loan, sso_deduction=sso_deduction,
             net_salary=net_salary
         )

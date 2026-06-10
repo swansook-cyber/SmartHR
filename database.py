@@ -55,6 +55,7 @@ class PayrollTransaction(Base):
     gross_salary = Column(Float, default=0.0)
     
     late_mins = Column(Float, default=0.0)
+    sick_days = Column(Float, default=0.0)
     unpaid_leave_days = Column(Float, default=0.0)
     leave_hours = Column(Float, default=0.0)
     leave_deduction = Column(Float, default=0.0)
@@ -107,6 +108,7 @@ class ServiceEmployee(Base):
     gross_service = Column(Float, default=0.0)
     sick_days = Column(Float, default=0.0)
     sick_deduction = Column(Float, default=0.0)
+    leave_days = Column(Float, default=0.0)
     leave_hours = Column(Float, default=0.0)
     leave_hour_deduction = Column(Float, default=0.0)
     late_hours = Column(Float, default=0.0)

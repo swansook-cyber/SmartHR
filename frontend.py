@@ -64,6 +64,7 @@ def recalculate_service_rows(rows, service_rate):
     for row in rows:
         service_weight = float(row.get("service_weight", 0) or 0)
         sick_days = float(row.get("sick_days", 0) or 0)
+        leave_days = float(row.get("leave_days", 0) or 0)
         leave_hours = float(row.get("leave_hours", 0) or 0)
         late_hours = float(row.get("late_hours", 0) or 0)
         evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
@@ -84,6 +85,7 @@ def recalculate_service_rows(rows, service_rate):
             "service_rate": round_baht(service_rate),
             "gross_service": gross_service,
             "sick_days": sick_days,
+            "leave_days": leave_days,
             "sick_deduction": sick_deduction,
             "leave_hours": leave_hours,
             "leave_hour_deduction": leave_hour_deduction,
@@ -226,7 +228,8 @@ def render_service_setup():
             if rows:
                 editor_columns = [
                     "emp_code", "employee_name", "department", "start_date", "service_type",
-                    "service_percent", "eligible_service_month", "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
+                    "service_percent", "eligible_service_month", "source", "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
+                    "leave_days",
                     "sick_deduction", "leave_hours", "leave_hour_deduction", "late_hours", "late_deduction",
                     "evaluation_percent", "evaluation_deduction", "deposit_deduction",
                     "net_service", "notes"
@@ -242,7 +245,7 @@ def render_service_setup():
                     num_rows="fixed",
                     disabled=[
                         "emp_code", "employee_name", "department", "start_date", "service_type",
-                        "service_percent", "eligible_service_month", "prior_deposit_total", "service_weight", "service_rate", "gross_service",
+                        "service_percent", "eligible_service_month", "source", "prior_deposit_total", "service_weight", "service_rate", "gross_service",
                         "sick_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={
@@ -251,11 +254,13 @@ def render_service_setup():
                         "department": st.column_config.TextColumn("Department"),
                         "start_date": st.column_config.TextColumn("Start Date"),
                         "service_type": st.column_config.TextColumn("Service Type"),
+                        "source": st.column_config.TextColumn("Source"),
                         "prior_deposit_total": st.column_config.NumberColumn("Prior Deposit Total", format="%d"),
                         "service_weight": st.column_config.NumberColumn("Service Weight", format="%.2f"),
                         "service_rate": st.column_config.NumberColumn("Service Rate", format="%d"),
                         "gross_service": st.column_config.NumberColumn("Gross Service", format="%d"),
                         "sick_days": st.column_config.NumberColumn("Sick Days", min_value=0.0, step=0.5),
+                        "leave_days": st.column_config.NumberColumn("Leave Days", min_value=0.0, step=0.5),
                         "sick_deduction": st.column_config.NumberColumn("Sick Deduction", format="%d"),
                         "leave_hours": st.column_config.NumberColumn("Leave Hours", min_value=0.0, step=0.5),
                         "leave_hour_deduction": st.column_config.NumberColumn("Leave Hour Deduction", format="%d"),
@@ -288,7 +293,7 @@ def render_service_setup():
 
                 st.dataframe(
                     pd.DataFrame(recalculated_rows)[[
-                        "emp_code", "employee_name", "department", "gross_service", "sick_deduction",
+                        "emp_code", "employee_name", "department", "source", "gross_service", "sick_deduction",
                         "leave_hour_deduction", "late_deduction", "evaluation_deduction", "deposit_deduction", "net_service", "notes"
                     ]],
                     use_container_width=True
@@ -1078,7 +1083,7 @@ elif st.session_state["role"] == "admin":
         st.markdown("---")
         st.subheader("⏱️ อัปโหลดข้อมูลรายรับ-รายจ่ายเพิ่มเติม (Excel)")
         
-        st.info("💡 หัวคอลัมน์ Excel: `emp_code`, `emp_name`, `ot_15_hours`, `ot_1_hours`, `late_mins`, `absent_days`, `leave_hours`, `other_benefits`, `backpay`, `company_loan`, `student_loan`, `sso_manual` (ใส่ยอดประกันสังคมสำหรับคนที่ต้องการล็อคยอด ถ้าไม่ใส่ระบบจะคิด 5% ตามปกติ)")
+        st.info("💡 หัวคอลัมน์ Excel: `emp_code`, `emp_name`, `ot_15_hours`, `ot_1_hours`, `late_mins`, `sick_days`, `absent_days`, `leave_hours`, `other_benefits`, `backpay`, `company_loan`, `student_loan`, `sso_manual` (sick_days เก็บประวัติเท่านั้น ไม่กระทบเงินเดือน / ใส่ยอดประกันสังคมสำหรับคนที่ต้องการล็อคยอด ถ้าไม่ใส่ระบบจะคิด 5% ตามปกติ)")
         
         time_file = st.file_uploader("📂 อัปโหลดไฟล์ Excel", type=["xlsx", "csv"], key="payroll_file")
         time_data_list = [] 
