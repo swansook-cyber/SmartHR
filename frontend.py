@@ -49,72 +49,242 @@ def record_log(action):
     except:
         pass
 
+def round_baht(value):
+    return int(Decimal(str(value or 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+def service_month_label(item):
+    return f"{item['month']}-{item['year']}"
+
+def recalculate_service_rows(rows, service_rate):
+    recalculated = []
+    for row in rows:
+        service_weight = float(row.get("service_weight", 0) or 0)
+        sick_days = float(row.get("sick_days", 0) or 0)
+        evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
+        deposit_deduction = round_baht(row.get("deposit_deduction", 0))
+        gross_service = round_baht(service_rate * service_weight)
+        sick_deduction = round_baht(gross_service / 30 * sick_days)
+        evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
+        net_service = max(0, round_baht(gross_service - sick_deduction - evaluation_deduction - deposit_deduction))
+        new_row = dict(row)
+        new_row.update({
+            "service_rate": round_baht(service_rate),
+            "gross_service": gross_service,
+            "sick_days": sick_days,
+            "sick_deduction": sick_deduction,
+            "evaluation_percent": evaluation_percent,
+            "evaluation_deduction": evaluation_deduction,
+            "deposit_deduction": deposit_deduction,
+            "net_service": net_service,
+            "notes": row.get("notes", "")
+        })
+        recalculated.append(new_row)
+    return recalculated
+
+def service_distribution_summary(rows):
+    distribution = {}
+    for row in rows:
+        amount = round_baht(row.get("net_service", 0))
+        distribution[amount] = distribution.get(amount, 0) + 1
+    return [{"Net Service Amount": amount, "Employee Count": count} for amount, count in sorted(distribution.items(), reverse=True)]
+
+def service_cash_report(total_amount):
+    remaining = round_baht(total_amount)
+    rows = []
+    for denom in [1000, 500, 100, 50, 20]:
+        qty = remaining // denom
+        amount = qty * denom
+        rows.append({"Denomination": denom, "Quantity": qty, "Amount": amount})
+        remaining -= amount
+    rows.append({"Denomination": "coins/remainder", "Quantity": remaining, "Amount": remaining})
+    return rows
+
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
-    st.caption("Phase 1: ตั้งค่ายอดรวมรายเดือนและโครงสร้างกองทุน ยังไม่คำนวณแจกจ่ายให้พนักงาน")
+    st.caption("Service setup, calculation, and reports")
 
     month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     current_year = datetime.date.today().year
 
-    col_month, col_year = st.columns(2)
-    with col_month:
-        month = st.selectbox("Month", month_options, index=datetime.date.today().month - 1, key="service_month")
-    with col_year:
-        year = st.selectbox("Year", [str(y) for y in range(current_year, current_year + 6)], key="service_year")
-
-    existing = {}
     try:
-        existing = api_get_json(f"/service/months/{year}/{month}")
+        service_months = api_get_json("/service/months")
     except:
+        service_months = []
+
+    setup_tab, calculation_tab, reports_tab = st.tabs(["Service Setup", "Service Calculation", "Reports"])
+
+    with setup_tab:
+        col_month, col_year = st.columns(2)
+        with col_month:
+            month = st.selectbox("Month", month_options, index=datetime.date.today().month - 1, key="service_month")
+        with col_year:
+            year = st.selectbox("Year", [str(y) for y in range(current_year, current_year + 6)], key="service_year")
+
         existing = {}
+        try:
+            existing = api_get_json(f"/service/months/{year}/{month}")
+        except:
+            existing = {}
 
-    with st.form("service_setup_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            room_service = st.number_input("Room Service", min_value=0.0, step=1000.0, value=float(existing.get("room_service", 0.0)))
-            fb_service = st.number_input("F&B Service", min_value=0.0, step=1000.0, value=float(existing.get("fb_service", 0.0)))
-        with col2:
-            zipline_service = st.number_input("Zipline Service", min_value=0.0, step=1000.0, value=float(existing.get("zipline_service", 0.0)))
-            other_service = st.number_input("Other Service", min_value=0.0, step=1000.0, value=float(existing.get("other_service", 0.0)))
-        note = st.text_area("Note", value=existing.get("note", ""), height=80)
+        with st.form("service_setup_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                room_service = st.number_input("Room Service", min_value=0.0, step=1000.0, value=float(existing.get("room_service", 0.0)))
+                fb_service = st.number_input("F&B Service", min_value=0.0, step=1000.0, value=float(existing.get("fb_service", 0.0)))
+            with col2:
+                zipline_service = st.number_input("Zipline Service", min_value=0.0, step=1000.0, value=float(existing.get("zipline_service", 0.0)))
+                other_service = st.number_input("Other Service", min_value=0.0, step=1000.0, value=float(existing.get("other_service", 0.0)))
+            note = st.text_area("Note", value=existing.get("note", ""), height=80)
 
-        total_service = room_service + fb_service + zipline_service + other_service
-        st.markdown("---")
-        metric1, metric2, metric3, metric4 = st.columns(4)
-        with metric1: st.metric("Total Service", f"{total_service:,.2f}")
-        with metric2: st.metric("Employee Pool (60%)", f"{total_service * 0.60:,.2f}")
-        with metric3: st.metric("Welfare Fund (20%)", f"{total_service * 0.20:,.2f}")
-        with metric4: st.metric("Resort Fund (20%)", f"{total_service * 0.20:,.2f}")
-
-        if st.form_submit_button("💾 Save Service Setup", type="primary", use_container_width=True):
-            payload = {
-                "month": month,
-                "year": int(year),
-                "room_service": room_service,
-                "fb_service": fb_service,
-                "zipline_service": zipline_service,
-                "other_service": other_service,
-                "note": note
-            }
-            try:
-                res = requests.post(f"{API_URL}/service/months", json=payload, timeout=REQUEST_TIMEOUT)
-                if res.status_code == 200:
-                    clear_api_cache()
-                    st.success("✅ บันทึก Service Setup สำเร็จ")
-                    st.rerun()
-                else:
-                    st.error(f"❌ เกิดข้อผิดพลาด: {res.text}")
-            except Exception as e:
-                st.error(f"❌ ไม่สามารถเชื่อมต่อระบบหลังบ้านได้: {e}")
-
-    try:
-        history = api_get_json("/service/months")
-        if history:
+            total_service = room_service + fb_service + zipline_service + other_service
             st.markdown("---")
-            st.subheader("Service Setup History")
-            st.dataframe(pd.DataFrame(history), use_container_width=True)
-    except:
-        pass
+            metric1, metric2, metric3, metric4 = st.columns(4)
+            with metric1: st.metric("Total Service", f"{total_service:,.2f}")
+            with metric2: st.metric("Employee Pool (60%)", f"{total_service * 0.60:,.2f}")
+            with metric3: st.metric("Welfare Fund (20%)", f"{total_service * 0.20:,.2f}")
+            with metric4: st.metric("Resort Fund (20%)", f"{total_service * 0.20:,.2f}")
+
+            if st.form_submit_button("💾 Save Service Setup", type="primary", use_container_width=True):
+                payload = {
+                    "month": month,
+                    "year": int(year),
+                    "room_service": room_service,
+                    "fb_service": fb_service,
+                    "zipline_service": zipline_service,
+                    "other_service": other_service,
+                    "note": note
+                }
+                try:
+                    res = requests.post(f"{API_URL}/service/months", json=payload, timeout=REQUEST_TIMEOUT)
+                    if res.status_code == 200:
+                        clear_api_cache()
+                        st.success("✅ บันทึก Service Setup สำเร็จ")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ เกิดข้อผิดพลาด: {res.text}")
+                except Exception as e:
+                    st.error(f"❌ ไม่สามารถเชื่อมต่อระบบหลังบ้านได้: {e}")
+
+        try:
+            history = api_get_json("/service/months")
+            if history:
+                st.markdown("---")
+                st.subheader("Service Setup History")
+                st.dataframe(pd.DataFrame(history), use_container_width=True)
+        except:
+            pass
+
+    with calculation_tab:
+        st.subheader("Service Calculation")
+        if not service_months:
+            st.info("กรุณาสร้าง Service Setup ก่อน")
+        else:
+            service_options = {service_month_label(item): item for item in service_months}
+            selected_label = st.selectbox("Select Service Month", list(service_options.keys()), key="calc_service_month")
+            selected_month = service_options[selected_label]
+
+            manual_rate_value = selected_month.get("manual_service_rate")
+            manual_rate = st.number_input(
+                "Manual Service Rate Override",
+                min_value=0.0,
+                value=float(manual_rate_value or 0.0),
+                step=100.0,
+                key="manual_service_rate"
+            )
+            manual_rate_payload = manual_rate if manual_rate > 0 else None
+
+            try:
+                preview_url = f"/service/calculate/{selected_month['id']}"
+                if manual_rate_payload is not None:
+                    preview_url += f"?manual_service_rate={manual_rate_payload}"
+                preview = api_get_json(preview_url)
+                rows = preview.get("employees", [])
+                summary = preview.get("summary", {})
+            except Exception as e:
+                rows = []
+                summary = {}
+                st.error(f"❌ ไม่สามารถโหลดข้อมูลคำนวณได้: {e}")
+
+            service_rate = summary.get("service_rate", 0)
+            if rows:
+                editor_columns = [
+                    "emp_code", "first_name", "last_name", "department", "start_date", "service_type",
+                    "service_percent", "service_weight", "service_rate", "gross_service", "sick_days",
+                    "sick_deduction", "evaluation_percent", "evaluation_deduction", "deposit_deduction",
+                    "net_service", "notes"
+                ]
+                df_calc = pd.DataFrame(rows)
+                for col in editor_columns:
+                    if col not in df_calc.columns:
+                        df_calc[col] = ""
+                edited_df = st.data_editor(
+                    df_calc[editor_columns],
+                    use_container_width=True,
+                    num_rows="fixed",
+                    disabled=[
+                        "emp_code", "first_name", "last_name", "department", "start_date", "service_type",
+                        "service_percent", "service_weight", "service_rate", "gross_service",
+                        "sick_deduction", "evaluation_deduction", "net_service"
+                    ],
+                    column_config={
+                        "sick_days": st.column_config.NumberColumn("Sick Days", min_value=0.0, step=0.5),
+                        "evaluation_percent": st.column_config.NumberColumn("Evaluation Deduction %", min_value=0.0, max_value=100.0, step=1.0),
+                        "deposit_deduction": st.column_config.NumberColumn("Deposit Deduction", min_value=0.0, step=100.0),
+                        "notes": st.column_config.TextColumn("Notes")
+                    },
+                    key=f"service_calc_editor_{selected_month['id']}"
+                )
+
+                recalculated_rows = recalculate_service_rows(edited_df.to_dict(orient="records"), service_rate)
+                actual_paid = sum(round_baht(row.get("net_service", 0)) for row in recalculated_rows)
+                employee_pool = round_baht(summary.get("employee_pool", 0))
+                balance_returned = employee_pool - actual_paid
+
+                st.markdown("---")
+                c1, c2, c3 = st.columns(3)
+                with c1: st.metric("Employee Pool", f"{employee_pool:,.0f}")
+                with c2: st.metric("Total Weight", f"{summary.get('total_weight', 0):,.2f}")
+                with c3: st.metric("Calculated Service Rate", f"{round_baht(summary.get('calculated_service_rate', 0)):,.0f}")
+                c4, c5, c6 = st.columns(3)
+                with c4: st.metric("Manual Service Rate", f"{round_baht(manual_rate_payload or 0):,.0f}")
+                with c5: st.metric("Actual Employee Paid", f"{actual_paid:,.0f}")
+                with c6: st.metric("Balance Returned To Resort", f"{balance_returned:,.0f}")
+
+                if actual_paid > employee_pool:
+                    st.warning("⚠️ Actual Employee Paid exceeds Employee Pool. Please reduce manual rate or deductions before saving.")
+
+                if st.button("💾 Save Service Calculation", type="primary", use_container_width=True, disabled=actual_paid > employee_pool):
+                    payload = {"manual_service_rate": manual_rate_payload, "employees": recalculated_rows}
+                    try:
+                        res = requests.post(f"{API_URL}/service/calculate/{selected_month['id']}/save", json=payload, timeout=REQUEST_TIMEOUT)
+                        if res.status_code == 200:
+                            clear_api_cache()
+                            st.success(res.json()["message"])
+                            st.rerun()
+                        else:
+                            st.error(f"❌ เกิดข้อผิดพลาด: {res.text}")
+                    except Exception as e:
+                        st.error(f"❌ ไม่สามารถบันทึกได้: {e}")
+
+    with reports_tab:
+        st.subheader("Service Reports")
+        if not service_months:
+            st.info("กรุณาสร้าง Service Setup ก่อน")
+        else:
+            service_options = {service_month_label(item): item for item in service_months}
+            selected_report_label = st.selectbox("Select Service Month", list(service_options.keys()), key="report_service_month")
+            selected_report_month = service_options[selected_report_label]
+            try:
+                reports = api_get_json(f"/service/reports/{selected_report_month['id']}")
+                st.markdown("### Distribution Summary")
+                st.dataframe(pd.DataFrame(reports.get("distribution_summary", [])), use_container_width=True)
+                st.metric("Total Employees", reports.get("total_employees", 0))
+
+                st.markdown("### Cash Preparation Report")
+                st.dataframe(pd.DataFrame(reports.get("cash_preparation", [])), use_container_width=True)
+                st.metric("Grand Total", f"{round_baht(reports.get('cash_grand_total', 0)):,.0f}")
+            except Exception as e:
+                st.info(f"ยังไม่มีข้อมูล Service Calculation สำหรับเดือนนี้: {e}")
 
 def apply_custom_css():
     st.markdown("""

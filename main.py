@@ -4,20 +4,44 @@ from sqlalchemy import func, inspect, text
 import database as db
 from typing import List
 import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 app = FastAPI()
 
 # 🟢 บรรทัดนี้ช่วยสร้างตารางให้ใหม่ทันทีถ้าฐานข้อมูลหาย
 db.Base.metadata.create_all(bind=db.engine)
 
+def add_column_if_missing(conn, table_name, existing_columns, column_name, column_sql):
+    if column_name not in existing_columns:
+        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"))
+
 def ensure_schema():
     inspector = inspect(db.engine)
     employee_columns = {col["name"] for col in inspector.get_columns("employees")}
     with db.engine.begin() as conn:
-        if "service_type" not in employee_columns:
-            conn.execute(text("ALTER TABLE employees ADD COLUMN service_type VARCHAR DEFAULT 'AUTO'"))
-        if "service_percent" not in employee_columns:
-            conn.execute(text("ALTER TABLE employees ADD COLUMN service_percent FLOAT DEFAULT 100.0"))
+        add_column_if_missing(conn, "employees", employee_columns, "service_type", "VARCHAR DEFAULT 'AUTO'")
+        add_column_if_missing(conn, "employees", employee_columns, "service_percent", "FLOAT DEFAULT 100.0")
+
+        if "service_months" in inspector.get_table_names():
+            service_month_columns = {col["name"] for col in inspector.get_columns("service_months")}
+            add_column_if_missing(conn, "service_months", service_month_columns, "manual_service_rate", "FLOAT")
+
+        if "service_employees" in inspector.get_table_names():
+            service_employee_columns = {col["name"] for col in inspector.get_columns("service_employees")}
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "first_name", "VARCHAR")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "last_name", "VARCHAR")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "department", "VARCHAR")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "position", "VARCHAR")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "service_weight", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "service_rate", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "gross_service", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_days", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_deduction", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "evaluation_percent", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "evaluation_deduction", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "deposit_deduction", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "net_service", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "notes", "VARCHAR")
 
 ensure_schema()
 
@@ -239,7 +263,86 @@ def serialize_service_month(item):
         "employee_pool": total_service * 0.60,
         "welfare_fund": total_service * 0.20,
         "resort_fund": total_service * 0.20,
+        "manual_service_rate": item.manual_service_rate,
         "note": item.note or ""
+    }
+
+def round_baht(value):
+    return int(Decimal(str(value or 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+def parse_date(value):
+    try:
+        return datetime.datetime.strptime(str(value), "%Y-%m-%d").date()
+    except:
+        return None
+
+def calculate_service_weight(emp, service_month):
+    service_type = str(emp.service_type or "AUTO").upper()
+    if service_type == "NONE":
+        return 0.0
+    if service_type == "FIXED":
+        return float(emp.service_percent or 0) / 100.0
+
+    start_date = parse_date(emp.start_date)
+    if not start_date:
+        return 1.0
+
+    months_worked = (int(service_month.year) - start_date.year) * 12 + (month_number(service_month.month) - start_date.month) + 1
+    if months_worked <= 0:
+        return 0.0
+    if months_worked == 1 and start_date.day > 10:
+        return 0.0
+    if months_worked in [2, 3]:
+        return 0.5
+    return 1.0
+
+def month_number(month_name):
+    month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    try:
+        return month_options.index(str(month_name)) + 1
+    except ValueError:
+        return 1
+
+def serialize_service_employee(row):
+    return {
+        "id": row.id,
+        "service_month_id": row.service_month_id,
+        "emp_code": row.emp_code,
+        "first_name": row.first_name or "",
+        "last_name": row.last_name or "",
+        "department": row.department or "",
+        "position": row.position or "",
+        "service_type": row.service_type or "AUTO",
+        "service_percent": row.service_percent or 0.0,
+        "service_weight": row.service_weight or 0.0,
+        "service_rate": row.service_rate or 0.0,
+        "fixed_amount": row.fixed_amount or 0.0,
+        "gross_service": row.gross_service or 0.0,
+        "sick_days": row.sick_days or 0.0,
+        "sick_deduction": row.sick_deduction or 0.0,
+        "evaluation_percent": row.evaluation_percent or 0.0,
+        "evaluation_deduction": row.evaluation_deduction or 0.0,
+        "deposit_deduction": row.deposit_deduction or 0.0,
+        "net_service": row.net_service or 0.0,
+        "notes": row.notes or ""
+    }
+
+def service_summary(service_month, rows):
+    employee_pool = serialize_service_month(service_month)["employee_pool"]
+    total_weight = sum(float(row.get("service_weight", 0) or 0) for row in rows)
+    calculated_rate = round_baht(employee_pool / total_weight) if total_weight > 0 else 0
+    manual_rate = service_month.manual_service_rate
+    service_rate = round_baht(manual_rate) if manual_rate not in [None, ""] else calculated_rate
+    actual_paid = sum(round_baht(row.get("net_service", 0)) for row in rows)
+    return {
+        "employee_pool": round_baht(employee_pool),
+        "total_weight": total_weight,
+        "calculated_service_rate": calculated_rate,
+        "manual_service_rate": round_baht(manual_rate) if manual_rate not in [None, ""] else None,
+        "service_rate": service_rate,
+        "actual_employee_paid": actual_paid,
+        "balance_returned_to_resort": round_baht(employee_pool - actual_paid),
+        "exceeds_employee_pool": actual_paid > round_baht(employee_pool)
     }
 
 @app.get("/service/months")
@@ -276,10 +379,164 @@ def upsert_service_month(data: dict, session: Session = Depends(get_db)):
     item.fb_service = float(data.get("fb_service", 0.0) or 0.0)
     item.zipline_service = float(data.get("zipline_service", 0.0) or 0.0)
     item.other_service = float(data.get("other_service", 0.0) or 0.0)
+    manual_rate = data.get("manual_service_rate", None)
+    item.manual_service_rate = None if manual_rate in [None, ""] else float(manual_rate)
     item.note = str(data.get("note", "") or "")
     session.commit()
     session.refresh(item)
     return serialize_service_month(item)
+
+@app.get("/service/calculate/{service_month_id}")
+def preview_service_calculation(service_month_id: int, manual_service_rate: float | None = None, session: Session = Depends(get_db)):
+    service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
+    if not service_month:
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
+
+    if manual_service_rate is not None:
+        service_month.manual_service_rate = manual_service_rate
+
+    active_emps = session.query(db.Employee).filter(db.Employee.is_active == True).order_by(
+        db.Employee.department.asc(),
+        db.Employee.emp_code.asc()
+    ).all()
+    existing_rows = {
+        row.emp_code: row
+        for row in session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).all()
+    }
+
+    base_rows = []
+    total_weight = 0.0
+    for emp in active_emps:
+        existing = existing_rows.get(emp.emp_code)
+        service_weight = calculate_service_weight(emp, service_month)
+        total_weight += service_weight
+        base_rows.append((emp, existing, service_weight))
+
+    month_data = serialize_service_month(service_month)
+    calculated_rate = round_baht(month_data["employee_pool"] / total_weight) if total_weight > 0 else 0
+    selected_rate = round_baht(manual_service_rate) if manual_service_rate is not None else calculated_rate
+
+    rows = []
+    for emp, existing, service_weight in base_rows:
+        sick_days = existing.sick_days if existing else 0.0
+        evaluation_percent = existing.evaluation_percent if existing else 0.0
+        deposit_deduction = existing.deposit_deduction if existing else 0.0
+        notes = existing.notes if existing else ""
+        gross_service = round_baht(selected_rate * service_weight)
+        sick_deduction = round_baht(gross_service / 30 * float(sick_days or 0))
+        evaluation_deduction = round_baht(gross_service * float(evaluation_percent or 0) / 100)
+        net_service = round_baht(gross_service - sick_deduction - evaluation_deduction - float(deposit_deduction or 0))
+        if net_service < 0:
+            net_service = 0
+        rows.append({
+            "emp_code": emp.emp_code,
+            "first_name": emp.first_name,
+            "last_name": emp.last_name,
+            "department": emp.department,
+            "position": emp.position,
+            "start_date": emp.start_date,
+            "service_type": emp.service_type or "AUTO",
+            "service_percent": emp.service_percent if emp.service_percent is not None else 100.0,
+            "service_weight": service_weight,
+            "service_rate": selected_rate,
+            "gross_service": gross_service,
+            "sick_days": sick_days or 0.0,
+            "sick_deduction": sick_deduction,
+            "evaluation_percent": evaluation_percent or 0.0,
+            "evaluation_deduction": evaluation_deduction,
+            "deposit_deduction": round_baht(deposit_deduction or 0),
+            "net_service": net_service,
+            "notes": notes or ""
+        })
+
+    return {
+        "service_month": month_data,
+        "summary": service_summary(service_month, rows),
+        "employees": rows
+    }
+
+@app.post("/service/calculate/{service_month_id}/save")
+def save_service_calculation(service_month_id: int, data: dict, session: Session = Depends(get_db)):
+    service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
+    if not service_month:
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
+
+    manual_rate = data.get("manual_service_rate", None)
+    service_month.manual_service_rate = None if manual_rate in [None, ""] else float(manual_rate)
+
+    rows = data.get("employees", [])
+    summary = service_summary(service_month, rows)
+    if summary["exceeds_employee_pool"]:
+        raise HTTPException(status_code=400, detail="Actual Employee Paid exceeds Employee Pool")
+
+    session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).delete()
+    for row in rows:
+        service_employee = db.ServiceEmployee(
+            service_month_id=service_month_id,
+            emp_code=str(row.get("emp_code", "")),
+            first_name=str(row.get("first_name", "")),
+            last_name=str(row.get("last_name", "")),
+            department=str(row.get("department", "")),
+            position=str(row.get("position", "")),
+            service_type=str(row.get("service_type", "AUTO")),
+            service_percent=float(row.get("service_percent", 100.0) or 0.0),
+            service_weight=float(row.get("service_weight", 0.0) or 0.0),
+            service_rate=round_baht(row.get("service_rate", 0.0)),
+            gross_service=round_baht(row.get("gross_service", 0.0)),
+            sick_days=float(row.get("sick_days", 0.0) or 0.0),
+            sick_deduction=round_baht(row.get("sick_deduction", 0.0)),
+            evaluation_percent=float(row.get("evaluation_percent", 0.0) or 0.0),
+            evaluation_deduction=round_baht(row.get("evaluation_deduction", 0.0)),
+            deposit_deduction=round_baht(row.get("deposit_deduction", 0.0)),
+            net_service=round_baht(row.get("net_service", 0.0)),
+            notes=str(row.get("notes", "") or "")
+        )
+        session.add(service_employee)
+
+    session.commit()
+    return {"message": "บันทึก Service Calculation สำเร็จ", "summary": summary}
+
+@app.get("/service/employees/{service_month_id}")
+def get_service_employees(service_month_id: int, session: Session = Depends(get_db)):
+    rows = session.query(db.ServiceEmployee).filter(
+        db.ServiceEmployee.service_month_id == service_month_id
+    ).order_by(db.ServiceEmployee.department.asc(), db.ServiceEmployee.emp_code.asc()).all()
+    return [serialize_service_employee(row) for row in rows]
+
+@app.get("/service/reports/{service_month_id}")
+def get_service_reports(service_month_id: int, session: Session = Depends(get_db)):
+    service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
+    if not service_month:
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
+
+    rows = [serialize_service_employee(row) for row in session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).all()]
+    distribution = {}
+    for row in rows:
+        amount = round_baht(row.get("net_service", 0))
+        distribution[amount] = distribution.get(amount, 0) + 1
+
+    distribution_summary = [
+        {"Net Service Amount": amount, "Employee Count": count}
+        for amount, count in sorted(distribution.items(), key=lambda item: item[0], reverse=True)
+    ]
+
+    remaining = sum(round_baht(row.get("net_service", 0)) for row in rows)
+    cash_rows = []
+    for denom in [1000, 500, 100, 50, 20]:
+        qty = remaining // denom
+        amount = qty * denom
+        cash_rows.append({"Denomination": denom, "Quantity": qty, "Amount": amount})
+        remaining -= amount
+    cash_rows.append({"Denomination": "coins/remainder", "Quantity": remaining, "Amount": remaining})
+
+    summary = service_summary(service_month, rows)
+    return {
+        "summary": summary,
+        "distribution_summary": distribution_summary,
+        "total_employees": len(rows),
+        "cash_preparation": cash_rows,
+        "cash_grand_total": sum(row["Amount"] for row in cash_rows)
+    }
 
 # ==========================================
 # 💰 ระบบประมวลผลเงินเดือน (Payroll)

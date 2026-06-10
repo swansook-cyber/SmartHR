@@ -85,6 +85,7 @@ class ServiceMonth(Base):
     fb_service = Column(Float, default=0.0)
     zipline_service = Column(Float, default=0.0)
     other_service = Column(Float, default=0.0)
+    manual_service_rate = Column(Float, nullable=True)
     note = Column(String, nullable=True)
 
 # 👥 ตาราง snapshot พนักงานที่เกี่ยวข้องกับ Service Charge
@@ -94,9 +95,23 @@ class ServiceEmployee(Base):
     id = Column(Integer, primary_key=True, index=True)
     service_month_id = Column(Integer, index=True)
     emp_code = Column(String, index=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    position = Column(String, nullable=True)
     service_type = Column(String, default="AUTO")
     service_percent = Column(Float, default=100.0)
+    service_weight = Column(Float, default=0.0)
+    service_rate = Column(Float, default=0.0)
     fixed_amount = Column(Float, default=0.0)
+    gross_service = Column(Float, default=0.0)
+    sick_days = Column(Float, default=0.0)
+    sick_deduction = Column(Float, default=0.0)
+    evaluation_percent = Column(Float, default=0.0)
+    evaluation_deduction = Column(Float, default=0.0)
+    deposit_deduction = Column(Float, default=0.0)
+    net_service = Column(Float, default=0.0)
+    notes = Column(String, nullable=True)
 
 # 💳 ตารางเงินฝาก/รายการพักยอดของพนักงาน
 class EmployeeDeposit(Base):
