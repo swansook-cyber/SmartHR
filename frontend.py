@@ -807,38 +807,85 @@ elif st.session_state["role"] == "employee":
     with col_title: st.title(f"👨‍💼 ยินดีต้อนรับ, คุณ {st.session_state['emp_name']}")
     with col_logout:
         if st.button("🚪 ออกจากระบบ", use_container_width=True): st.session_state.clear(); st.rerun()
-    st.markdown("---"); st.subheader("📄 ดาวน์โหลดสลิปเงินเดือนของคุณ")
-    
-    try:
-        available_cycles = list(dict.fromkeys(api_get_json("/payroll/cycles")))
-    except: available_cycles = []
+    st.markdown("---")
+    payroll_slip_tab, service_slip_tab = st.tabs(["📄 Payroll Slip", "🧾 Service Charge Slip"])
 
-    if not available_cycles: st.info("📌 ยังไม่มีรอบการจ่ายเงินเดือน")
-    else:
-        search_cycle = st.selectbox("📂 เลือกรอบเดือน", available_cycles)
-        if st.button("🔍 ดูสลิปเงินเดือน", type="primary"):
-            try:
-                record_log(f"พนักงานเข้าดูสลิปรอบ: {search_cycle}")
-                data = api_get_json(f"/payroll/{search_cycle}"); payroll_list = data["transactions"]
-                my_data = next((t for t in payroll_list if str(t['emp_code']) == str(st.session_state["emp_code"])), None)
-                if my_data:
-                    st.success(f"✅ พบข้อมูลรอบ {data['cycle_name']}")
-                    col1, col2, col3 = st.columns(3)
-                    with col1: st.info(f"**💵 รายรับรวม:**\n### {my_data['gross_salary']:,.2f} บาท")
-                    with col2: st.warning(f"**📉 รายการหักรวม:**\n### {my_data['leave_deduction']+my_data['company_loan']+my_data['student_loan']+my_data['sso_deduction']:,.2f} บาท")
-                    with col3: st.success(f"**💰 รับสุทธิ:**\n### {my_data['net_salary']:,.2f} บาท")
-                    pdf_payslip = generate_pdf_payslips([my_data], data['cycle_name'])
-                    st.download_button(
-                        "📥 โหลดสลิปฉบับเต็ม (PDF)",
-                        data=pdf_payslip,
-                        file_name=f"Payslip_{search_cycle}.pdf",
-                        mime="application/pdf",
-                        type="primary",
-                        on_click=record_log,
-                        args=(f"พนักงานดาวน์โหลดสลิปรอบ: {search_cycle}",)
-                    )
-                else: st.warning("⚠️ ไม่พบข้อมูลของคุณในรอบนี้")
-            except: st.error("❌ ขัดข้อง")
+    with payroll_slip_tab:
+        st.subheader("📄 ดาวน์โหลดสลิปเงินเดือนของคุณ")
+        try:
+            available_cycles = list(dict.fromkeys(api_get_json("/payroll/cycles")))
+        except: available_cycles = []
+
+        if not available_cycles: st.info("📌 ยังไม่มีรอบการจ่ายเงินเดือน")
+        else:
+            search_cycle = st.selectbox("📂 เลือกรอบเดือน", available_cycles)
+            if st.button("🔍 ดูสลิปเงินเดือน", type="primary"):
+                try:
+                    record_log(f"พนักงานเข้าดูสลิปรอบ: {search_cycle}")
+                    data = api_get_json(f"/payroll/{search_cycle}"); payroll_list = data["transactions"]
+                    my_data = next((t for t in payroll_list if str(t['emp_code']) == str(st.session_state["emp_code"])), None)
+                    if my_data:
+                        st.success(f"✅ พบข้อมูลรอบ {data['cycle_name']}")
+                        col1, col2, col3 = st.columns(3)
+                        with col1: st.info(f"**💵 รายรับรวม:**\n### {my_data['gross_salary']:,.2f} บาท")
+                        with col2: st.warning(f"**📉 รายการหักรวม:**\n### {my_data['leave_deduction']+my_data['company_loan']+my_data['student_loan']+my_data['sso_deduction']:,.2f} บาท")
+                        with col3: st.success(f"**💰 รับสุทธิ:**\n### {my_data['net_salary']:,.2f} บาท")
+                        pdf_payslip = generate_pdf_payslips([my_data], data['cycle_name'])
+                        st.download_button(
+                            "📥 โหลดสลิปฉบับเต็ม (PDF)",
+                            data=pdf_payslip,
+                            file_name=f"Payslip_{search_cycle}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            on_click=record_log,
+                            args=(f"พนักงานดาวน์โหลดสลิปรอบ: {search_cycle}",)
+                        )
+                    else: st.warning("⚠️ ไม่พบข้อมูลของคุณในรอบนี้")
+                except: st.error("❌ ขัดข้อง")
+
+    with service_slip_tab:
+        st.subheader("🧾 Service Charge Slip")
+        try:
+            service_months = api_get_json(service_api_path("/months"))
+            my_service_slips = api_get_json(service_api_path(f"/slips/{st.session_state['emp_code']}"))
+        except:
+            service_months = []
+            my_service_slips = []
+            st.error("❌ ไม่สามารถโหลดข้อมูล Service Charge ได้")
+
+        if not service_months:
+            st.info("No service charge record for this month.")
+        else:
+            service_options = {service_month_label(item): item for item in service_months}
+            selected_service_label = st.selectbox("📂 เลือกเดือน Service Charge", list(service_options.keys()), key="employee_service_slip_month")
+            selected_service_month = service_options[selected_service_label]
+            my_service_data = next(
+                (item for item in my_service_slips if int(item.get("service_month_id", 0)) == int(selected_service_month["id"])),
+                None
+            )
+
+            if not my_service_data:
+                st.info("No service charge record for this month.")
+            else:
+                record_log(f"พนักงานเข้าดูสลิป Service Charge รอบ: {my_service_data['service_month']}")
+                st.success(f"✅ พบข้อมูล Service Charge รอบ {my_service_data['service_month']}")
+                col1, col2, col3 = st.columns(3)
+                with col1: st.metric("Gross Service", f"{my_service_data['gross_service']:,.0f} บาท")
+                with col2: st.metric("Total Deductions", f"{(my_service_data['sick_deduction'] + my_service_data['leave_hour_deduction'] + my_service_data['late_deduction'] + my_service_data['evaluation_deduction'] + my_service_data['deposit_deduction']):,.0f} บาท")
+                with col3: st.metric("Net Service", f"{my_service_data['net_service']:,.0f} บาท")
+
+                slip_rows = [
+                    {"รายการ": "Service Month", "ยอด": my_service_data["service_month"]},
+                    {"รายการ": "Gross Service", "ยอด": f"{my_service_data['gross_service']:,.0f}"},
+                    {"รายการ": "Sick Deduction", "ยอด": f"{my_service_data['sick_deduction']:,.0f}"},
+                    {"รายการ": "Leave Hour Deduction", "ยอด": f"{my_service_data['leave_hour_deduction']:,.0f}"},
+                    {"รายการ": "Late Deduction", "ยอด": f"{my_service_data['late_deduction']:,.0f}"},
+                    {"รายการ": "Evaluation Deduction", "ยอด": f"{my_service_data['evaluation_deduction']:,.0f}"},
+                    {"รายการ": "Deposit Deduction", "ยอด": f"{my_service_data['deposit_deduction']:,.0f}"},
+                    {"รายการ": "Net Service", "ยอด": f"{my_service_data['net_service']:,.0f}"},
+                    {"รายการ": "Notes", "ยอด": my_service_data.get("notes", "") or "-"}
+                ]
+                st.dataframe(pd.DataFrame(slip_rows), use_container_width=True)
 
 # หน้าจอ Admin (เจ้าหน้าที่ HR)
 elif st.session_state["role"] == "admin":

@@ -452,6 +452,26 @@ def serialize_service_employee(row):
         "notes": row.notes or ""
     }
 
+def serialize_service_slip(row, service_month):
+    return {
+        "service_month_id": service_month.id,
+        "service_month": f"{service_month.month}-{service_month.year}",
+        "month": service_month.month,
+        "year": service_month.year,
+        "emp_code": row.emp_code,
+        "first_name": row.first_name or "",
+        "last_name": row.last_name or "",
+        "department": row.department or "",
+        "gross_service": row.gross_service or 0.0,
+        "sick_deduction": row.sick_deduction or 0.0,
+        "leave_hour_deduction": row.leave_hour_deduction or 0.0,
+        "late_deduction": row.late_deduction or 0.0,
+        "evaluation_deduction": row.evaluation_deduction or 0.0,
+        "deposit_deduction": row.deposit_deduction or 0.0,
+        "net_service": row.net_service or 0.0,
+        "notes": row.notes or ""
+    }
+
 def service_summary(service_month, rows):
     employee_pool = serialize_service_month(service_month)["employee_pool"]
     total_weight = sum(float(row.get("service_weight", 0) or 0) for row in rows)
@@ -710,6 +730,26 @@ def get_service_employees(service_month_id: int, session: Session = Depends(get_
         db.ServiceEmployee.service_month_id == service_month_id
     ).order_by(db.ServiceEmployee.department.asc(), db.ServiceEmployee.emp_code.asc()).all()
     return [serialize_service_employee(row) for row in rows]
+
+@app.get("/api/service/slips")
+@app.get("/service/slips")
+def get_all_service_slips(session: Session = Depends(get_db)):
+    rows = session.query(db.ServiceEmployee, db.ServiceMonth).join(
+        db.ServiceMonth,
+        db.ServiceEmployee.service_month_id == db.ServiceMonth.id
+    ).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc(), db.ServiceEmployee.emp_code.asc()).all()
+    return [serialize_service_slip(row, service_month) for row, service_month in rows]
+
+@app.get("/api/service/slips/{emp_code}")
+@app.get("/service/slips/{emp_code}")
+def get_employee_service_slips(emp_code: str, session: Session = Depends(get_db)):
+    rows = session.query(db.ServiceEmployee, db.ServiceMonth).join(
+        db.ServiceMonth,
+        db.ServiceEmployee.service_month_id == db.ServiceMonth.id
+    ).filter(
+        db.ServiceEmployee.emp_code == emp_code
+    ).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc()).all()
+    return [serialize_service_slip(row, service_month) for row, service_month in rows]
 
 @app.get("/api/service/reports/{service_month_id}")
 @app.get("/service/reports/{service_month_id}")
