@@ -724,7 +724,7 @@ def serialize_service_employee(row):
         "evaluation_deduction": row.evaluation_deduction or 0.0,
         "deposit_deduction": row.deposit_deduction or 0.0,
         "net_service": row.net_service or 0.0,
-        "notes": row.notes or ""
+        "notes": sanitize_service_manual_notes(row.notes)
     }
 
 def serialize_service_slip(row, service_month, employee=None, payroll_input=None):
@@ -744,6 +744,7 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
         "gross_service": row.gross_service or 0.0,
         "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
+        "leave_days": row.leave_days or 0.0,
         "leave_hours": row.leave_hours or 0.0,
         "leave_hour_deduction": row.leave_hour_deduction or 0.0,
         "late_mins": late_mins,
@@ -755,13 +756,14 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
         "net_service": row.net_service or 0.0,
         "deduction_remarks": service_attendance_remarks({
             "sick_days": row.sick_days or 0.0,
+            "leave_days": row.leave_days or 0.0,
             "leave_hours": row.leave_hours or 0.0,
             "late_mins": late_mins,
             "late_hours": row.late_hours or 0.0,
             "evaluation_percent": row.evaluation_percent or 0.0,
             "deposit_deduction": row.deposit_deduction or 0.0
         }),
-        "notes": row.notes or ""
+        "notes": sanitize_service_manual_notes(row.notes)
     }
 
 def service_summary(service_month, rows):
@@ -808,9 +810,34 @@ def format_service_remark_number(value):
         return f"{int(value):,}"
     return f"{value:,.2f}".rstrip("0").rstrip(".")
 
+def sanitize_service_manual_notes(notes):
+    text_value = str(notes or "").strip()
+    if not text_value:
+        return ""
+
+    auto_remark_pattern = re.compile(
+        r"""
+        (?:^|,\s*)
+        (?:
+            Sick\s*:\s*[\d,.]+(?:\s*(?:day|days))?
+            |Leave\s+Hour\s*:\s*[\d,.]+
+            |Leave\s*:\s*[\d,.]+(?:\s*(?:day|days|hour|hours|hr|hrs))?
+            |Late\s*:\s*[\d,.]+(?:\s*(?:min|mins|minute|minutes|hour|hours|hr|hrs))?
+            |Evaluation\s*:\s*[\d,.]+%?
+            |Deposit\s*:\s*[\d,.]+
+        )
+        (?=,|$)
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    cleaned = auto_remark_pattern.sub("", text_value)
+    cleaned = re.sub(r"\s*,\s*", ", ", cleaned)
+    return cleaned.strip(" ,")
+
 def service_attendance_remarks(row):
     remarks = []
     sick_days = float(row.get("sick_days", 0) or 0)
+    leave_days = float(row.get("leave_days", 0) or 0)
     leave_hours = float(row.get("leave_hours", 0) or 0)
     late_mins = row.get("late_mins")
     late_hours = float(row.get("late_hours", 0) or 0)
@@ -820,13 +847,15 @@ def service_attendance_remarks(row):
     if sick_days > 0:
         unit = "day" if sick_days == 1 else "days"
         remarks.append(f"Sick: {format_service_remark_number(sick_days)} {unit}")
+    if leave_days > 0:
+        unit = "day" if leave_days == 1 else "days"
+        remarks.append(f"Leave: {format_service_remark_number(leave_days)} {unit}")
     if leave_hours > 0:
-        unit = "hour" if leave_hours == 1 else "hours"
-        remarks.append(f"Leave: {format_service_remark_number(leave_hours)} {unit}")
+        remarks.append(f"Leave: {format_service_remark_number(leave_hours)} {'hr' if leave_hours == 1 else 'hrs'}")
     if late_mins not in [None, ""] and float(late_mins or 0) > 0:
         remarks.append(f"Late: {format_service_remark_number(float(late_mins or 0))} mins")
     elif late_hours > 0:
-        unit = "hour" if late_hours == 1 else "hours"
+        unit = "hr" if late_hours == 1 else "hrs"
         remarks.append(f"Late: {format_service_remark_number(late_hours)} {unit}")
     if evaluation_percent > 0:
         remarks.append(f"Evaluation: {format_service_remark_number(evaluation_percent)}%")
@@ -846,9 +875,9 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
     display_start_date = getattr(employee, "start_date", None) if employee else None
     deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
     total_after_deduction = round_baht(data.get("gross_service", 0)) - deduction_amount
-    notes = str(data.get("notes", "") or "").strip()
+    notes = sanitize_service_manual_notes(data.get("notes", ""))
     deduction_remarks = service_attendance_remarks(data)
-    remarks = ", ".join(part for part in [notes, deduction_remarks] if part)
+    remarks = ", ".join(part for part in [deduction_remarks, notes] if part)
     return {
         "emp_code": data.get("emp_code", ""),
         "first_name": display_first_name if display_first_name is not None else data.get("first_name", ""),
@@ -989,7 +1018,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         )
         if service_weight <= 0:
             deposit_deduction = 0
-        notes = existing.notes if existing else ""
+        notes = sanitize_service_manual_notes(existing.notes) if existing else ""
         gross_service = round_baht(selected_rate * service_weight)
         amounts = calculate_service_amounts({
             "gross_service": gross_service,
@@ -1141,7 +1170,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             evaluation_deduction=round_baht(row.get("evaluation_deduction", 0.0)),
             deposit_deduction=round_baht(row.get("deposit_deduction", 0.0)),
             net_service=round_baht(row.get("net_service", 0.0)),
-            notes=str(row.get("notes", "") or "")
+            notes=sanitize_service_manual_notes(row.get("notes", ""))
         )
         session.add(service_employee)
 
