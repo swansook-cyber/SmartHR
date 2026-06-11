@@ -1099,9 +1099,17 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         deposit_deduction = round_baht(normalized.get("deposit_deduction", 0.0))
         prior_deposit_total = service_deposit_total_before(session, normalized.get("emp_code", ""), service_month_id, service_month)
 
-        if service_weight <= 0 or prior_deposit_total >= 1500:
-            deposit_deduction = 0
-        elif prior_deposit_total + deposit_deduction > 1500:
+        if service_weight <= 0 and deposit_deduction != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deposit deduction mismatch for {normalized.get('emp_code', '')}: service weight is 0 but submitted deposit is {deposit_deduction}"
+            )
+        if prior_deposit_total >= 1500 and deposit_deduction != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deposit deduction mismatch for {normalized.get('emp_code', '')}: prior deposit total is already 1,500 Baht"
+            )
+        if prior_deposit_total + deposit_deduction > 1500:
             raise HTTPException(
                 status_code=400,
                 detail=f"Deposit deduction for {normalized.get('emp_code', '')} exceeds 1,500 Baht total"
