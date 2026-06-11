@@ -1,2 +1,5 @@
 ~$*.xlsx
 ~$*.xls
+HRMS_Backup/*.db
+HRMS_Backup/*.sqlite
+HRMS_Backup/*.sqlite3

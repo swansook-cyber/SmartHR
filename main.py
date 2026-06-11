@@ -6,6 +6,9 @@ from typing import List
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import json
+from pathlib import Path
+import sqlite3
+import shutil
 
 app = FastAPI()
 
@@ -112,6 +115,75 @@ def audit_details(data, keys=None):
     except:
         return str(data)
 
+BACKUP_DIR = Path("HRMS_Backup")
+DATABASE_FILE = Path("payroll.db")
+
+def backup_file_info(path):
+    try:
+        stat = path.stat()
+        return {
+            "file_name": path.name,
+            "path": str(path),
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except:
+        return {}
+
+def list_backup_files():
+    try:
+        BACKUP_DIR.mkdir(exist_ok=True)
+        files = sorted(BACKUP_DIR.glob("*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
+        return [backup_file_info(path) for path in files]
+    except:
+        return []
+
+def create_database_backup(backup_type="manual"):
+    BACKUP_DIR.mkdir(exist_ok=True)
+    if not DATABASE_FILE.exists():
+        raise FileNotFoundError("Cannot find payroll.db")
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_type = "".join(ch for ch in str(backup_type or "manual") if ch.isalnum() or ch in ["_", "-"]) or "manual"
+    backup_path = BACKUP_DIR / f"payroll_backup_{safe_type}_{timestamp}.db"
+
+    try:
+        source = sqlite3.connect(str(DATABASE_FILE))
+        destination = sqlite3.connect(str(backup_path))
+        with destination:
+            source.backup(destination)
+        source.close()
+        destination.close()
+    except:
+        try:
+            source.close()
+        except:
+            pass
+        try:
+            destination.close()
+        except:
+            pass
+        shutil.copy2(DATABASE_FILE, backup_path)
+
+    return backup_file_info(backup_path)
+
+def ensure_day_30_backup():
+    try:
+        today = datetime.date.today()
+        if today.day != 30:
+            return None
+        BACKUP_DIR.mkdir(exist_ok=True)
+        marker = BACKUP_DIR / f"auto_backup_{today.strftime('%Y_%m')}.done"
+        if marker.exists():
+            return None
+        backup_info = create_database_backup("auto_day_30")
+        marker.write_text(backup_info.get("file_name", ""), encoding="utf-8")
+        return backup_info
+    except:
+        return None
+
+ensure_day_30_backup()
+
 # ==========================================
 # 📜 ระบบบันทึกประวัติการใช้งาน (Access Logs)
 # ==========================================
@@ -181,6 +253,32 @@ def get_audit_logs(
         }
         for log in logs
     ]
+
+@app.get("/backups/")
+def get_backups():
+    return {
+        "database_exists": DATABASE_FILE.exists(),
+        "database_path": str(DATABASE_FILE),
+        "backup_dir": str(BACKUP_DIR),
+        "manual_script_exists": Path("Backup_HRMS.bat").exists(),
+        "auto_backup_day": 30,
+        "backups": list_backup_files()
+    }
+
+@app.post("/backups/create")
+def create_backup(data: dict = Body(default={}), session: Session = Depends(get_db)):
+    try:
+        backup_info = create_database_backup("manual")
+        write_audit_log(
+            data.get("audit_username", "-"),
+            "Create Backup",
+            "System",
+            backup_info.get("file_name", ""),
+            backup_info.get("path", "")
+        )
+        return {"message": "Backup created successfully", "backup": backup_info}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
 # 👥 ระบบจัดการพนักงาน (Employees)

@@ -1051,6 +1051,63 @@ def render_audit_logs_page():
     except Exception as e:
         st.error(f"ไม่สามารถโหลด Audit Logs ได้: {e}")
 
+def render_backups_page():
+    st.title("System > Backups")
+    st.caption("Database backup status and manual backup tools")
+
+    try:
+        status = api_get_json("/backups/")
+    except Exception as e:
+        st.error(f"ไม่สามารถโหลดข้อมูล Backup ได้: {e}")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Database Found", "Yes" if status.get("database_exists") else "No")
+    with col2:
+        st.metric("Manual Script", "Found" if status.get("manual_script_exists") else "Missing")
+    with col3:
+        st.metric("Auto Backup Day", status.get("auto_backup_day", "-"))
+
+    st.info(
+        f"Backup folder: {status.get('backup_dir', '-')}\n\n"
+        "Existing `Backup_HRMS.bat` is still available. New manual backups use timestamped files in the backup folder."
+    )
+
+    if st.button("Create Manual Backup Now", type="primary", use_container_width=True):
+        try:
+            res = requests.post(
+                f"{API_URL}/backups/create",
+                json={"audit_username": current_username()},
+                timeout=REQUEST_TIMEOUT
+            )
+            if res.status_code == 200:
+                api_get_json.clear()
+                backup_name = res.json().get("backup", {}).get("file_name", "")
+                st.success(f"Backup created: {backup_name}")
+                st.rerun()
+            else:
+                st.error(f"Backup failed: {res.text}")
+        except Exception as e:
+            st.error(f"Backup failed: {e}")
+
+    backups = status.get("backups", [])
+    st.markdown("### Backup Files")
+    if backups:
+        df_backups = pd.DataFrame(backups)
+        st.dataframe(
+            df_backups,
+            column_config={
+                "file_name": "File Name",
+                "path": "Path",
+                "size_bytes": "Size (bytes)",
+                "modified_at": "Modified At"
+            },
+            use_container_width=True
+        )
+    else:
+        st.info("No timestamped backup files found yet.")
+
 def apply_custom_css():
     st.markdown("""
     <style>
@@ -1614,12 +1671,15 @@ elif st.session_state["role"] == "admin":
             logout_user()
             st.rerun()
 
-    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "System > Audit Logs"], key="admin_menu")
+    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "System > Audit Logs", "System > Backups"], key="admin_menu")
     if admin_menu == "Service Charge (Beta)":
         render_service_setup()
         st.stop()
     if admin_menu == "System > Audit Logs":
         render_audit_logs_page()
+        st.stop()
+    if admin_menu == "System > Backups":
+        render_backups_page()
         st.stop()
 
     tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 0. ภาพรวมสถิติ", "👥 1. ฐานข้อมูลพนักงาน", "💰 2. ประมวลผลเงินเดือน", "📥 3. ออกเอกสารและรายงาน", "⏱️ 4. ประมวลผลเวลา (Check-in)", "📜 5. ประวัติการใช้งาน"])
