@@ -931,14 +931,29 @@ def render_service_setup():
                 key="manual_service_rate"
             )
             manual_rate_payload = manual_rate if manual_rate > 0 else None
+            refresh_key = f"service_calc_refresh_inputs_{selected_month['id']}"
+            force_refresh_key = f"service_calc_force_eligibility_refresh_{selected_month['id']}"
+            force_refresh_eligibility = st.session_state.pop(force_refresh_key, False)
 
             try:
                 preview_url = service_api_path(f"/calculate/{selected_month['id']}")
                 if manual_rate_payload is not None:
                     preview_url += f"?manual_service_rate={manual_rate_payload}"
+                if force_refresh_eligibility:
+                    preview_url += "&refresh_eligibility=true" if "?" in preview_url else "?refresh_eligibility=true"
                 preview = api_get_json(preview_url)
                 rows = preview.get("employees", [])
                 summary = preview.get("summary", {})
+                preserved_inputs = st.session_state.pop(refresh_key, None)
+                if preserved_inputs:
+                    for row in rows:
+                        emp_inputs = preserved_inputs.get(str(row.get("emp_code")), {})
+                        for field in [
+                            "sick_days", "leave_days", "leave_hours", "late_hours",
+                            "evaluation_percent", "notes"
+                        ]:
+                            if field in emp_inputs:
+                                row[field] = emp_inputs[field]
             except Exception as e:
                 rows = []
                 summary = {}
@@ -1003,9 +1018,23 @@ def render_service_setup():
                     edited_rows.append(source_row)
 
                 recalc_clicked = st.button("🔄 Recalculate", use_container_width=True)
-                recalculated_rows = recalculate_service_rows(edited_rows, service_rate)
                 if recalc_clicked:
-                    st.success("✅ Recalculated service deductions and net service")
+                    st.session_state[refresh_key] = {
+                        str(row.get("emp_code")): {
+                            "sick_days": row.get("sick_days", 0),
+                            "leave_days": row.get("leave_days", 0),
+                            "leave_hours": row.get("leave_hours", 0),
+                            "late_hours": row.get("late_hours", 0),
+                            "evaluation_percent": row.get("evaluation_percent", 0),
+                            "notes": row.get("notes", "")
+                        }
+                        for row in edited_rows
+                    }
+                    clear_api_cache()
+                    st.session_state[force_refresh_key] = True
+                    st.rerun()
+
+                recalculated_rows = recalculate_service_rows(edited_rows, service_rate)
 
                 actual_paid = sum(round_baht(row.get("net_service", 0)) for row in recalculated_rows)
                 employee_pool = round_baht(summary.get("employee_pool", 0))

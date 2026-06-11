@@ -738,6 +738,11 @@ def service_report_deduction_remarks(row):
 
 def serialize_service_detail_report(row, employee=None):
     data = serialize_service_employee(row)
+    display_first_name = getattr(employee, "first_name", None) if employee else None
+    display_last_name = getattr(employee, "last_name", None) if employee else None
+    display_department = getattr(employee, "department", None) if employee else None
+    display_position = getattr(employee, "position", None) if employee else None
+    display_start_date = getattr(employee, "start_date", None) if employee else None
     deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
     total_after_deduction = round_baht(data.get("gross_service", 0)) - deduction_amount
     notes = str(data.get("notes", "") or "").strip()
@@ -745,11 +750,11 @@ def serialize_service_detail_report(row, employee=None):
     remarks = ", ".join(part for part in [notes, deduction_remarks] if part)
     return {
         "emp_code": data.get("emp_code", ""),
-        "first_name": data.get("first_name", ""),
-        "last_name": data.get("last_name", ""),
-        "department": data.get("department", "") or "ไม่ระบุแผนก",
-        "position": data.get("position", "") or "",
-        "start_date": getattr(employee, "start_date", None) or "",
+        "first_name": display_first_name if display_first_name is not None else data.get("first_name", ""),
+        "last_name": display_last_name if display_last_name is not None else data.get("last_name", ""),
+        "department": (display_department if display_department is not None else data.get("department", "")) or "ไม่ระบุแผนก",
+        "position": display_position if display_position is not None else data.get("position", "") or "",
+        "start_date": display_start_date if display_start_date is not None else "",
         "service_percent": round_baht(float(data.get("service_weight", 0) or 0) * 100),
         "income_amount": round_baht(data.get("gross_service", 0)),
         "deduction_amount": deduction_amount,
@@ -836,7 +841,7 @@ def upsert_service_month(data: dict, session: Session = Depends(get_db)):
 
 @app.get("/api/service/calculate/{service_month_id}")
 @app.get("/service/calculate/{service_month_id}")
-def preview_service_calculation(service_month_id: int, manual_service_rate: float | None = None, session: Session = Depends(get_db)):
+def preview_service_calculation(service_month_id: int, manual_service_rate: float | None = None, refresh_eligibility: bool = False, session: Session = Depends(get_db)):
     service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
     if not service_month:
         raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")
@@ -875,7 +880,11 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         late_hours = existing.late_hours if existing else payroll_input.get("late_hours", 0.0)
         evaluation_percent = existing.evaluation_percent if existing else 0.0
         prior_deposit_total = service_deposit_total_before(session, emp.emp_code, service_month_id, service_month)
-        deposit_deduction = existing.deposit_deduction if existing else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
+        deposit_deduction = (
+            existing.deposit_deduction
+            if existing and not refresh_eligibility
+            else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
+        )
         if service_weight <= 0:
             deposit_deduction = 0
         notes = existing.notes if existing else ""
@@ -934,9 +943,15 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
     service_month.manual_service_rate = None if manual_rate in [None, ""] else float(manual_rate)
 
     rows = []
+    employees = {
+        str(emp.emp_code): emp
+        for emp in session.query(db.Employee).all()
+    }
     for row in data.get("employees", []):
         normalized = dict(row)
-        service_weight = float(normalized.get("service_weight", 0.0) or 0.0)
+        emp_code = str(normalized.get("emp_code", "") or "")
+        employee = employees.get(emp_code)
+        service_weight = calculate_service_weight(employee, service_month) if employee else float(normalized.get("service_weight", 0.0) or 0.0)
         service_rate = round_baht(normalized.get("service_rate", 0.0))
         gross_service = round_baht(service_rate * service_weight)
         sick_days = float(normalized.get("sick_days", 0.0) or 0.0)
@@ -965,6 +980,13 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         })
 
         normalized.update({
+            "first_name": employee.first_name if employee else normalized.get("first_name", ""),
+            "last_name": employee.last_name if employee else normalized.get("last_name", ""),
+            "department": employee.department if employee else normalized.get("department", ""),
+            "position": employee.position if employee else normalized.get("position", ""),
+            "service_type": employee.service_type if employee else normalized.get("service_type", "AUTO"),
+            "service_percent": employee.service_percent if employee else normalized.get("service_percent", 100.0),
+            "eligible_service_month": eligible_service_month_index(employee, service_month) if employee else normalized.get("eligible_service_month", ""),
             "service_weight": service_weight,
             "service_rate": service_rate,
             "gross_service": gross_service,
@@ -1117,7 +1139,10 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         "summary": summary,
         "service_month": serialize_service_month(service_month),
         "service_detail": [
-            serialize_service_detail_report(row, employees.get(str(row.emp_code)))
+            {
+                **serialize_service_detail_report(row, employees.get(str(row.emp_code))),
+                **({"payroll_order": payroll_order[str(row.emp_code)]} if str(row.emp_code) in payroll_order else {})
+            }
             for row in service_rows
         ],
         "distribution_summary": distribution_summary,
