@@ -20,6 +20,33 @@ SERVICE_API_PREFIX = "/api/service"
 
 st.set_page_config(page_title="Aonang Fiore HRMS", layout="wide", page_icon="🌴")
 
+DEPARTMENT_ORDER = [
+    "RM-ต้อนรับส่วนหน้า",
+    "RM-แม่บ้าน",
+    "FB-ห้องอาหาร",
+    "FB-ครัวผลิต",
+    "MY-เรือ MY Lalida",
+    "TU-Zipline",
+    "AM-บริหารส่วนกลาง",
+    "AC-บัญชี",
+    "SM-การตลาด",
+    "EN-ช่างทั่วไป",
+    "GN-สวน-ภูมิทัศน์",
+    "HR-ทรัพยากรบุคคล",
+]
+DEPARTMENT_ORDER_INDEX = {dept: index for index, dept in enumerate(DEPARTMENT_ORDER)}
+
+
+def ordered_department_names(grouped_departments):
+    first_seen = {dept: index for index, dept in enumerate(grouped_departments.keys())}
+    return sorted(
+        grouped_departments.keys(),
+        key=lambda dept: (
+            DEPARTMENT_ORDER_INDEX.get(dept, len(DEPARTMENT_ORDER)),
+            first_seen.get(dept, len(first_seen)),
+        ),
+    )
+
 @st.cache_data(ttl=30, show_spinner=False)
 def api_get_json(path):
     res = requests.get(f"{API_URL}{path}", timeout=REQUEST_TIMEOUT)
@@ -198,7 +225,8 @@ def service_detail_report_html(reports, selected_month):
     body_rows = []
     grand_totals = {field: 0 for field in total_fields}
     employee_no = 1
-    for department, dept_rows in grouped.items():
+    for department in ordered_department_names(grouped):
+        dept_rows = grouped[department]
         body_rows.append(f"<tr class='dept-row'><td colspan='{len(columns)}'>แผนก: {html.escape(str(department))}</td></tr>")
         dept_totals = {field: 0 for field in total_fields}
         for row in dept_rows:
@@ -1458,7 +1486,8 @@ def generate_pdf_payroll_summary(payroll_data, cycle_name):
         if dept not in departments: departments[dept] = []
         departments[dept].append(emp)
     g_sal = g_ot = g_ben = g_back = g_gross = g_leave = g_loan = g_edu = g_sso = g_deduct = g_net = 0; emp_no = 1
-    for dept_name, emps in departments.items():
+    for dept_name in ordered_department_names(departments):
+        emps = departments[dept_name]
         if y < 120: c.showPage(); y = draw_payroll_header(c)
         c.setFont(font_bold, 12); c.drawString(15, y, f"แผนก: {dept_name}"); y -= 20; c.setFont(font_regular, 12)
         d_sal = d_ot = d_ben = d_back = d_gross = d_leave = d_loan = d_edu = d_sso = d_deduct = d_net = 0
@@ -1790,7 +1819,7 @@ elif st.session_state["role"] == "admin":
     with tab1:
         st.header("👥 จัดการฐานข้อมูลพนักงาน")
         mode = st.radio("เลือกโหมดการทำงาน:", ["➕ เพิ่มพนักงานใหม่", "📊 นำเข้าจาก Excel", "✏️ ค้นหา/แก้ไข", "📄 โหลดรายงานพนักงาน"], horizontal=True)
-        dept_options = ["RM-ต้อนรับส่วนหน้า", "RM-แม่บ้าน", "FB-ห้องอาหาร", "FB-ครัวผลิต", "MY-เรือ MY Lalida", "TU-Zipline", "AM-บริหารส่วนกลาง", "AC-บัญชี", "SM-การตลาด", "EN-ช่างทั่วไป", "GN-สวน-ภูมิทัศน์", "HR-ทรัพยากรบุคคล"]
+        dept_options = DEPARTMENT_ORDER
 
         if mode == "➕ เพิ่มพนักงานใหม่":
             st.subheader("➕ เพิ่มพนักงานใหม่")
