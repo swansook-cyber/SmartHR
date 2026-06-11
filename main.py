@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sqlite3
 import shutil
+import re
 
 app = FastAPI()
 
@@ -564,22 +565,63 @@ def service_month_key(service_month):
 def service_payroll_cycle_name(service_month):
     return f"{service_month.month}-{service_month.year}"
 
-def payroll_service_inputs(session, service_month):
-    cycle_name = service_payroll_cycle_name(service_month)
-    rows = session.query(db.PayrollTransaction).filter(
-        db.PayrollTransaction.cycle_name == cycle_name
-    ).all()
+def payroll_cycle_month_year(cycle_name):
+    month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    pattern = r"\b(" + "|".join(month_options) + r")\b\D+(\d{4})\b"
+    match = re.search(pattern, str(cycle_name or ""), flags=re.IGNORECASE)
+    if not match:
+        return None
+    month_name = next(month for month in month_options if month.lower() == match.group(1).lower())
+    return (int(match.group(2)), month_options.index(month_name) + 1)
 
-    return {
-        str(row.emp_code): {
+def latest_payroll_cycle_for_service_month(session, service_month):
+    service_key = service_month_key(service_month)
+    cycle_rows = session.query(
+        db.PayrollTransaction.cycle_name,
+        func.max(db.PayrollTransaction.id).label("latest_id"),
+        func.max(db.PayrollTransaction.payment_date).label("latest_payment_date")
+    ).group_by(db.PayrollTransaction.cycle_name).all()
+    matching_cycles = [
+        row for row in cycle_rows
+        if payroll_cycle_month_year(row.cycle_name) == service_key
+    ]
+    if not matching_cycles:
+        return None
+    return sorted(
+        matching_cycles,
+        key=lambda row: (int(row.latest_id or 0), str(row.latest_payment_date or "")),
+        reverse=True
+    )[0]
+
+def payroll_service_inputs(session, service_month):
+    cycle = latest_payroll_cycle_for_service_month(session, service_month)
+    if not cycle:
+        return {}
+
+    rows = session.query(db.PayrollTransaction).filter(
+        db.PayrollTransaction.cycle_name == cycle.cycle_name
+    ).order_by(db.PayrollTransaction.id.desc()).all()
+
+    imported = {}
+    payroll_year, payroll_month = payroll_cycle_month_year(cycle.cycle_name)
+    for row in rows:
+        emp_code = str(row.emp_code)
+        if emp_code in imported:
+            continue
+        imported[emp_code] = {
             "sick_days": float(row.sick_days or 0),
             "leave_days": float(row.unpaid_leave_days or 0),
             "leave_hours": float(row.leave_hours or 0),
             "late_hours": float(row.late_mins or 0) / 60,
-            "source": "Imported from Payroll"
+            "source": "Imported from Payroll",
+            "payroll_cycle_id": int(cycle.latest_id or 0),
+            "payroll_cycle_name": cycle.cycle_name,
+            "payroll_month": payroll_month,
+            "payroll_year": payroll_year,
+            "imported_from_payroll": True
         }
-        for row in rows
-    }
+
+    return imported
 
 def service_deposit_total_before(session, emp_code, service_month_id, current_service_month):
     current_key = service_month_key(current_service_month)
@@ -874,10 +916,11 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
     rows = []
     for emp, existing, service_weight in base_rows:
         payroll_input = payroll_inputs.get(str(emp.emp_code), {})
-        sick_days = existing.sick_days if existing else payroll_input.get("sick_days", 0.0)
-        leave_days = existing.leave_days if existing else payroll_input.get("leave_days", 0.0)
-        leave_hours = existing.leave_hours if existing else payroll_input.get("leave_hours", 0.0)
-        late_hours = existing.late_hours if existing else payroll_input.get("late_hours", 0.0)
+        import_payroll_values = bool(payroll_input) and (not existing or refresh_eligibility)
+        sick_days = payroll_input.get("sick_days", 0.0) if import_payroll_values else (existing.sick_days if existing else 0.0)
+        leave_days = payroll_input.get("leave_days", 0.0) if import_payroll_values else (existing.leave_days if existing else 0.0)
+        leave_hours = payroll_input.get("leave_hours", 0.0) if import_payroll_values else (existing.leave_hours if existing else 0.0)
+        late_hours = payroll_input.get("late_hours", 0.0) if import_payroll_values else (existing.late_hours if existing else 0.0)
         evaluation_percent = existing.evaluation_percent if existing else 0.0
         prior_deposit_total = service_deposit_total_before(session, emp.emp_code, service_month_id, service_month)
         deposit_deduction = (
@@ -923,6 +966,11 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "deposit_deduction": round_baht(deposit_deduction or 0),
             "net_service": amounts["net_service"],
             "source": payroll_input.get("source", ""),
+            "payroll_cycle_id": payroll_input.get("payroll_cycle_id"),
+            "payroll_cycle_name": payroll_input.get("payroll_cycle_name", ""),
+            "payroll_month": payroll_input.get("payroll_month"),
+            "payroll_year": payroll_input.get("payroll_year"),
+            "imported_from_payroll": bool(payroll_input),
             "notes": notes or ""
         })
 
@@ -1103,10 +1151,12 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
     ).all()
     employees = {str(emp.emp_code): emp for emp in session.query(db.Employee).all()}
     rows = [serialize_service_employee(row) for row in service_rows]
-    payroll_cycle_name = f"{service_month.month}-{service_month.year}"
-    payroll_transactions = session.query(db.PayrollTransaction).filter(
-        db.PayrollTransaction.cycle_name == payroll_cycle_name
-    ).all()
+    payroll_cycle = latest_payroll_cycle_for_service_month(session, service_month)
+    payroll_transactions = []
+    if payroll_cycle:
+        payroll_transactions = session.query(db.PayrollTransaction).filter(
+            db.PayrollTransaction.cycle_name == payroll_cycle.cycle_name
+        ).order_by(db.PayrollTransaction.id.asc()).all()
     payroll_order = {
         str(transaction.emp_code): index
         for index, transaction in enumerate(payroll_transactions)

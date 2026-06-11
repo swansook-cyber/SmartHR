@@ -949,7 +949,6 @@ def render_service_setup():
                     for row in rows:
                         emp_inputs = preserved_inputs.get(str(row.get("emp_code")), {})
                         for field in [
-                            "sick_days", "leave_days", "leave_hours", "late_hours",
                             "evaluation_percent", "notes"
                         ]:
                             if field in emp_inputs:
@@ -963,7 +962,9 @@ def render_service_setup():
             if rows:
                 editor_columns = [
                     "emp_code", "employee_name", "department", "start_date", "service_type",
-                    "service_percent", "eligible_service_month", "source", "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
+                    "service_percent", "eligible_service_month", "source", "imported_from_payroll",
+                    "payroll_cycle_id", "payroll_month", "payroll_year",
+                    "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
                     "leave_days",
                     "sick_deduction", "leave_hours", "leave_hour_deduction", "late_hours", "late_deduction",
                     "evaluation_percent", "evaluation_deduction", "deposit_deduction",
@@ -980,7 +981,9 @@ def render_service_setup():
                     num_rows="fixed",
                     disabled=[
                         "emp_code", "employee_name", "department", "start_date", "service_type",
-                        "service_percent", "eligible_service_month", "source", "prior_deposit_total", "service_weight", "service_rate", "gross_service",
+                        "service_percent", "eligible_service_month", "source", "imported_from_payroll",
+                        "payroll_cycle_id", "payroll_month", "payroll_year",
+                        "prior_deposit_total", "service_weight", "service_rate", "gross_service",
                         "sick_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={
@@ -990,6 +993,10 @@ def render_service_setup():
                         "start_date": st.column_config.TextColumn("Start Date"),
                         "service_type": st.column_config.TextColumn("Service Type"),
                         "source": st.column_config.TextColumn("Source"),
+                        "imported_from_payroll": st.column_config.CheckboxColumn("Imported from Payroll"),
+                        "payroll_cycle_id": st.column_config.NumberColumn("Payroll Cycle ID", format="%d"),
+                        "payroll_month": st.column_config.NumberColumn("Payroll Month", format="%d"),
+                        "payroll_year": st.column_config.NumberColumn("Payroll Year", format="%d"),
                         "prior_deposit_total": st.column_config.NumberColumn("Prior Deposit Total", format="%d"),
                         "service_weight": st.column_config.NumberColumn("Service Weight", format="%.2f"),
                         "service_rate": st.column_config.NumberColumn("Service Rate", format="%d"),
@@ -1021,10 +1028,6 @@ def render_service_setup():
                 if recalc_clicked:
                     st.session_state[refresh_key] = {
                         str(row.get("emp_code")): {
-                            "sick_days": row.get("sick_days", 0),
-                            "leave_days": row.get("leave_days", 0),
-                            "leave_hours": row.get("leave_hours", 0),
-                            "late_hours": row.get("late_hours", 0),
                             "evaluation_percent": row.get("evaluation_percent", 0),
                             "notes": row.get("notes", "")
                         }
