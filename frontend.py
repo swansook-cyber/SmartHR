@@ -153,6 +153,11 @@ def assert_service_total_consistency(preview_totals, saved_summary, reloaded_sum
         if preview_totals != reloaded_totals:
             raise ValueError(f"Preview totals {preview_totals} do not match reloaded totals {reloaded_totals}")
 
+def service_row_total_after_deduction(row):
+    if "total_after_deduction" in row:
+        return round_baht(row.get("total_after_deduction", 0))
+    return round_baht(row.get("net_service", 0)) + round_baht(row.get("deposit_deduction", 0))
+
 def recalculate_service_rows(rows, service_rate):
     recalculated = []
     for row in rows:
@@ -175,6 +180,7 @@ def recalculate_service_rows(rows, service_rate):
         leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
         late_deduction = round_baht(gross_service * late_hours * 0.10) if late_hours <= 5 else gross_service
         evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
+        total_after_deduction = round_baht(gross_service - sick_deduction - leave_day_deduction - leave_hour_deduction - late_deduction - evaluation_deduction)
         net_service = max(0, round_baht(gross_service - sick_deduction - leave_day_deduction - leave_hour_deduction - late_deduction - evaluation_deduction - deposit_deduction))
         new_row = dict(row)
         new_row.update({
@@ -190,6 +196,7 @@ def recalculate_service_rows(rows, service_rate):
             "late_deduction": late_deduction,
             "evaluation_percent": evaluation_percent,
             "evaluation_deduction": evaluation_deduction,
+            "total_after_deduction": total_after_deduction,
             "deposit_deduction": deposit_deduction,
             "net_service": net_service,
             "notes": row.get("notes", "")
@@ -1068,7 +1075,7 @@ def render_service_setup():
 
                 recalculated_rows = recalculate_service_rows(edited_rows, service_rate)
 
-                actual_paid = sum(round_baht(row.get("net_service", 0)) for row in recalculated_rows)
+                actual_paid = sum(service_row_total_after_deduction(row) for row in recalculated_rows)
                 employee_pool = round_baht(summary.get("employee_pool", 0))
                 balance_returned = employee_pool - actual_paid
 

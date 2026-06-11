@@ -701,6 +701,11 @@ def calculate_service_amounts(row):
         "net_service": net_service
     }
 
+def service_row_total_after_deduction(row):
+    if "total_after_deduction" in row:
+        return round_baht(row.get("total_after_deduction", 0))
+    return round_baht(row.get("net_service", 0)) + round_baht(row.get("deposit_deduction", 0))
+
 def month_number(month_name):
     month_options = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     try:
@@ -784,7 +789,7 @@ def service_summary(service_month, rows):
     calculated_rate = round_baht(employee_pool / total_weight) if total_weight > 0 else 0
     manual_rate = service_month.manual_service_rate
     service_rate = round_baht(manual_rate) if manual_rate not in [None, ""] else calculated_rate
-    actual_paid = sum(round_baht(row.get("net_service", 0)) for row in rows)
+    actual_paid = sum(service_row_total_after_deduction(row) for row in rows)
     return {
         "employee_pool": round_baht(employee_pool),
         "total_weight": total_weight,
@@ -906,7 +911,7 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
 
 def serialize_service_summary_report(service_month, service_rows):
     month_data = serialize_service_month(service_month)
-    actual_paid = sum(round_baht(row.net_service or 0) for row in service_rows)
+    actual_paid = sum(round_baht(row.net_service or 0) + round_baht(row.deposit_deduction or 0) for row in service_rows)
     deposit_total = sum(round_baht(row.deposit_deduction or 0) for row in service_rows)
     employee_pool = round_baht(month_data["employee_pool"])
     return {
@@ -1020,10 +1025,11 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         late_hours = payroll_input.get("late_hours", 0.0) if import_payroll_values else (existing.late_hours if existing else 0.0)
         evaluation_percent = existing.evaluation_percent if existing else 0.0
         prior_deposit_total = service_deposit_total_before(session, emp.emp_code, service_month_id, service_month)
+        default_deposit = default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
         deposit_deduction = (
             existing.deposit_deduction
-            if existing and not refresh_eligibility
-            else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
+            if existing and not refresh_eligibility and default_deposit > 0
+            else default_deposit
         )
         if str(emp.service_type or "AUTO").upper() != "AUTO" or service_weight <= 0:
             deposit_deduction = 0
@@ -1110,11 +1116,17 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         deposit_deduction = round_baht(normalized.get("deposit_deduction", 0.0))
         prior_deposit_total = service_deposit_total_before(session, normalized.get("emp_code", ""), service_month_id, service_month)
         service_type = str(getattr(employee, "service_type", normalized.get("service_type", "AUTO")) or "AUTO").upper()
+        expected_auto_deposit = default_service_deposit(employee, service_month, service_weight, prior_deposit_total) if employee else deposit_deduction
 
         if service_type != "AUTO" and deposit_deduction != 0:
             raise HTTPException(
                 status_code=400,
                 detail=f"Deposit deduction mismatch for {normalized.get('emp_code', '')}: service type {service_type} is not eligible for automatic deposit"
+            )
+        if service_type == "AUTO" and expected_auto_deposit == 0 and deposit_deduction != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deposit deduction mismatch for {normalized.get('emp_code', '')}: current employee eligibility requires deposit 0 but submitted deposit is {deposit_deduction}"
             )
         if service_weight <= 0 and deposit_deduction != 0:
             raise HTTPException(
