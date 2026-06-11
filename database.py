@@ -120,6 +120,7 @@ class ServiceEmployee(Base):
     sick_days = Column(Float, default=0.0)
     sick_deduction = Column(Float, default=0.0)
     leave_days = Column(Float, default=0.0)
+    leave_day_deduction = Column(Float, default=0.0)
     leave_hours = Column(Float, default=0.0)
     leave_hour_deduction = Column(Float, default=0.0)
     late_hours = Column(Float, default=0.0)

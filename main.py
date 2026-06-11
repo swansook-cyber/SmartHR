@@ -47,6 +47,7 @@ def ensure_schema():
             add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_days", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "sick_deduction", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_days", "FLOAT DEFAULT 0.0")
+            add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_day_deduction", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_hours", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "leave_hour_deduction", "FLOAT DEFAULT 0.0")
             add_column_if_missing(conn, "service_employees", service_employee_columns, "late_hours", "FLOAT DEFAULT 0.0")
@@ -664,12 +665,14 @@ def calculate_late_deduction(gross_service, late_hours):
 def calculate_service_amounts(row):
     gross_service = round_baht(row.get("gross_service", 0))
     sick_days = float(row.get("sick_days", 0) or 0)
+    leave_days = float(row.get("leave_days", 0) or 0)
     leave_hours = float(row.get("leave_hours", 0) or 0)
     late_hours = float(row.get("late_hours", 0) or 0)
     evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
     deposit_deduction = round_baht(row.get("deposit_deduction", 0))
 
     sick_deduction = round_baht(gross_service / 30 * sick_days)
+    leave_day_deduction = round_baht(gross_service / 30 * leave_days)
     leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
     late_deduction = calculate_late_deduction(gross_service, late_hours)
     evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
@@ -678,6 +681,7 @@ def calculate_service_amounts(row):
         round_baht(
             gross_service
             - sick_deduction
+            - leave_day_deduction
             - leave_hour_deduction
             - late_deduction
             - evaluation_deduction
@@ -687,6 +691,8 @@ def calculate_service_amounts(row):
 
     return {
         "sick_deduction": sick_deduction,
+        "leave_days": leave_days,
+        "leave_day_deduction": leave_day_deduction,
         "leave_hours": leave_hours,
         "leave_hour_deduction": leave_hour_deduction,
         "late_hours": late_hours,
@@ -720,6 +726,7 @@ def serialize_service_employee(row):
         "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
         "leave_days": row.leave_days or 0.0,
+        "leave_day_deduction": row.leave_day_deduction or 0.0,
         "leave_hours": row.leave_hours or 0.0,
         "leave_hour_deduction": row.leave_hour_deduction or 0.0,
         "late_hours": row.late_hours or 0.0,
@@ -749,6 +756,7 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
         "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
         "leave_days": row.leave_days or 0.0,
+        "leave_day_deduction": row.leave_day_deduction or 0.0,
         "leave_hours": row.leave_hours or 0.0,
         "leave_hour_deduction": row.leave_hour_deduction or 0.0,
         "late_mins": late_mins,
@@ -877,7 +885,7 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
     display_department = getattr(employee, "department", None) if employee else None
     display_position = getattr(employee, "position", None) if employee else None
     display_start_date = getattr(employee, "start_date", None) if employee else None
-    deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
+    deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_day_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
     total_after_deduction = round_baht(data.get("gross_service", 0)) - deduction_amount
     notes = sanitize_service_manual_notes(data.get("notes", ""))
     deduction_remarks = service_attendance_remarks(data)
@@ -1027,6 +1035,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         amounts = calculate_service_amounts({
             "gross_service": gross_service,
             "sick_days": sick_days,
+            "leave_days": leave_days,
             "leave_hours": leave_hours,
             "late_hours": late_hours,
             "evaluation_percent": evaluation_percent,
@@ -1049,6 +1058,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "sick_days": sick_days or 0.0,
             "sick_deduction": amounts["sick_deduction"],
             "leave_days": leave_days or 0.0,
+            "leave_day_deduction": amounts["leave_day_deduction"],
             "leave_hours": amounts["leave_hours"],
             "leave_hour_deduction": amounts["leave_hour_deduction"],
             "late_mins": payroll_input.get("late_mins") if payroll_input else None,
@@ -1128,6 +1138,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         amounts = calculate_service_amounts({
             "gross_service": gross_service,
             "sick_days": sick_days,
+            "leave_days": leave_days,
             "leave_hours": leave_hours,
             "late_hours": late_hours,
             "evaluation_percent": evaluation_percent,
@@ -1148,6 +1159,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             "sick_days": sick_days,
             "sick_deduction": amounts["sick_deduction"],
             "leave_days": leave_days,
+            "leave_day_deduction": amounts["leave_day_deduction"],
             "leave_hours": amounts["leave_hours"],
             "leave_hour_deduction": amounts["leave_hour_deduction"],
             "late_hours": amounts["late_hours"],
@@ -1180,6 +1192,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             sick_days=float(row.get("sick_days", 0.0) or 0.0),
             sick_deduction=round_baht(row.get("sick_deduction", 0.0)),
             leave_days=float(row.get("leave_days", 0.0) or 0.0),
+            leave_day_deduction=round_baht(row.get("leave_day_deduction", 0.0)),
             leave_hours=float(row.get("leave_hours", 0.0) or 0.0),
             leave_hour_deduction=round_baht(row.get("leave_hour_deduction", 0.0)),
             late_hours=float(row.get("late_hours", 0.0) or 0.0),

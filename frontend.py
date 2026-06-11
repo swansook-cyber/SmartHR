@@ -171,16 +171,18 @@ def recalculate_service_rows(rows, service_rate):
             deposit_deduction = min(deposit_deduction, 1500 - prior_deposit_total)
         gross_service = round_baht(service_rate * service_weight)
         sick_deduction = round_baht(gross_service / 30 * sick_days)
+        leave_day_deduction = round_baht(gross_service / 30 * leave_days)
         leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
         late_deduction = round_baht(gross_service * late_hours * 0.10) if late_hours <= 5 else gross_service
         evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
-        net_service = max(0, round_baht(gross_service - sick_deduction - leave_hour_deduction - late_deduction - evaluation_deduction - deposit_deduction))
+        net_service = max(0, round_baht(gross_service - sick_deduction - leave_day_deduction - leave_hour_deduction - late_deduction - evaluation_deduction - deposit_deduction))
         new_row = dict(row)
         new_row.update({
             "service_rate": round_baht(service_rate),
             "gross_service": gross_service,
             "sick_days": sick_days,
             "leave_days": leave_days,
+            "leave_day_deduction": leave_day_deduction,
             "sick_deduction": sick_deduction,
             "leave_hours": leave_hours,
             "leave_hour_deduction": leave_hour_deduction,
@@ -992,7 +994,7 @@ def render_service_setup():
                     "payroll_cycle_id", "payroll_month", "payroll_year",
                     "prior_deposit_total", "service_weight", "service_rate", "gross_service", "sick_days",
                     "leave_days",
-                    "sick_deduction", "leave_hours", "leave_hour_deduction", "late_hours", "late_deduction",
+                    "sick_deduction", "leave_day_deduction", "leave_hours", "leave_hour_deduction", "late_hours", "late_deduction",
                     "evaluation_percent", "evaluation_deduction", "deposit_deduction",
                     "net_service", "notes"
                 ]
@@ -1010,7 +1012,7 @@ def render_service_setup():
                         "service_percent", "eligible_service_month", "source", "imported_from_payroll",
                         "payroll_cycle_id", "payroll_month", "payroll_year",
                         "prior_deposit_total", "service_weight", "service_rate", "gross_service",
-                        "sick_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "net_service"
+                        "sick_deduction", "leave_day_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "net_service"
                     ],
                     column_config={
                         "emp_code": st.column_config.TextColumn("Employee Code"),
@@ -1030,6 +1032,7 @@ def render_service_setup():
                         "sick_days": st.column_config.NumberColumn("Sick Days", min_value=0.0, step=0.5),
                         "leave_days": st.column_config.NumberColumn("Leave Days", min_value=0.0, step=0.5),
                         "sick_deduction": st.column_config.NumberColumn("Sick Deduction", format="%d"),
+                        "leave_day_deduction": st.column_config.NumberColumn("Leave Day Deduction", format="%d"),
                         "leave_hours": st.column_config.NumberColumn("Leave Hours", min_value=0.0, step=0.5),
                         "leave_hour_deduction": st.column_config.NumberColumn("Leave Hour Deduction", format="%d"),
                         "late_hours": st.column_config.NumberColumn("Late Hours", min_value=0.0, step=0.5),
@@ -1072,7 +1075,7 @@ def render_service_setup():
                 st.dataframe(
                     pd.DataFrame(recalculated_rows)[[
                         "emp_code", "employee_name", "department", "source", "gross_service", "sick_deduction",
-                        "leave_hour_deduction", "late_deduction", "evaluation_deduction", "deposit_deduction", "net_service", "notes"
+                        "leave_day_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "deposit_deduction", "net_service", "notes"
                     ]],
                     use_container_width=True
                 )
@@ -1790,7 +1793,7 @@ elif st.session_state["role"] == "employee":
                 st.success(f"✅ พบข้อมูล Service Charge รอบ {my_service_data['service_month']}")
                 col1, col2, col3 = st.columns(3)
                 with col1: st.metric("Gross Service", f"{my_service_data['gross_service']:,.0f} บาท")
-                with col2: st.metric("Total Deductions", f"{(my_service_data['sick_deduction'] + my_service_data['leave_hour_deduction'] + my_service_data['late_deduction'] + my_service_data['evaluation_deduction'] + my_service_data['deposit_deduction']):,.0f} บาท")
+                with col2: st.metric("Total Deductions", f"{(my_service_data['sick_deduction'] + my_service_data.get('leave_day_deduction', 0) + my_service_data['leave_hour_deduction'] + my_service_data['late_deduction'] + my_service_data['evaluation_deduction'] + my_service_data['deposit_deduction']):,.0f} บาท")
                 with col3: st.metric("Net Service", f"{my_service_data['net_service']:,.0f} บาท")
 
                 deduction_text = my_service_data.get("deduction_remarks") or "No deductions"
