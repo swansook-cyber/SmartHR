@@ -854,7 +854,6 @@ def service_attendance_remarks(row):
     late_mins = row.get("late_mins")
     late_hours = float(row.get("late_hours", 0) or 0)
     evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
-    deposit_deduction = round_baht(row.get("deposit_deduction", 0))
 
     if sick_days > 0:
         unit = "day" if sick_days == 1 else "days"
@@ -871,8 +870,6 @@ def service_attendance_remarks(row):
         remarks.append(f"Late: {format_service_remark_number(late_hours)} {unit}")
     if evaluation_percent > 0:
         remarks.append(f"Evaluation: {format_service_remark_number(evaluation_percent)}%")
-    if deposit_deduction > 0:
-        remarks.append(f"Deposit: {deposit_deduction:,.0f}")
     return ", ".join(remarks)
 
 def serialize_service_detail_report(row, employee=None, payroll_input=None):
