@@ -542,6 +542,198 @@ def render_service_summary_report(summary_report):
     report_html = service_summary_report_html(summary_report)
     components.html(report_html, height=760, scrolling=True)
 
+def cash_preparation_report_html(reports, selected_month):
+    distribution_rows = reports.get("distribution_summary", [])
+    cash_rows = reports.get("cash_preparation", [])
+    total_employees = reports.get("total_employees", 0)
+    grand_total = round_baht(reports.get("cash_grand_total", 0))
+    title = f"Cash Preparation Report - Service Charge {selected_month['month']} {selected_month['year']}"
+    printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    distribution_body = []
+    for row in distribution_rows:
+        amount = round_baht(row.get("Net Service Amount", 0))
+        count = int(row.get("Employee Count", 0) or 0)
+        total_amount = round_baht(row.get("Total Amount", amount * count))
+        distribution_body.append(
+            "<tr>"
+            f"<td class='num'>{format_baht(amount)}</td>"
+            f"<td class='num'>{count:,}</td>"
+            f"<td class='num'>{format_baht(total_amount)}</td>"
+            "</tr>"
+        )
+
+    cash_body = []
+    for row in cash_rows:
+        denomination = row.get("Denomination", "")
+        label = "Coins / remainder" if str(denomination).lower() == "coins/remainder" else str(denomination)
+        cash_body.append(
+            "<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td class='num'>{format_baht(row.get('Quantity', 0))}</td>"
+            f"<td class='num'>{format_baht(row.get('Amount', 0))}</td>"
+            "</tr>"
+        )
+
+    return f"""<style>
+        .service-print-actions {{
+            margin: 0.5rem 0 1rem 0;
+        }}
+        .service-report-print-btn {{
+            border: 1px solid #2f6f5e;
+            background: #2f6f5e;
+            color: white;
+            padding: 0.45rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }}
+        .service-report {{
+            background: white;
+            color: #111;
+            padding: 18px;
+            border: 1px solid #d8d8d8;
+            overflow-x: auto;
+            font-family: Arial, sans-serif;
+        }}
+        .service-report h2 {{
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: 0;
+        }}
+        .service-report h3 {{
+            margin: 2px 0 4px 0;
+            font-size: 17px;
+            font-weight: 500;
+        }}
+        .service-report h4 {{
+            margin: 18px 0 6px 0;
+            font-size: 14px;
+        }}
+        .service-report .printed {{
+            font-size: 12px;
+            margin-bottom: 10px;
+        }}
+        .cash-report-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+        .cash-report-table th,
+        .cash-report-table td {{
+            border-bottom: 1px solid #e2e2e2;
+            padding: 6px 5px;
+            vertical-align: top;
+        }}
+        .cash-report-table th {{
+            border-top: 1px solid #111;
+            border-bottom: 1px solid #111;
+            text-align: left;
+            font-weight: 700;
+        }}
+        .cash-report-table .num {{
+            text-align: right;
+            white-space: nowrap;
+        }}
+        .grand-total td {{
+            font-weight: 700;
+            border-top: 2px solid #111;
+            border-bottom: 3px double #111;
+        }}
+        .summary-block {{
+            margin-top: 10px;
+            font-size: 13px;
+            line-height: 1.7;
+        }}
+        .signature-row {{
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-top: 70px;
+            text-align: center;
+            font-size: 12px;
+        }}
+        @media print {{
+            body * {{
+                visibility: hidden;
+            }}
+            .service-report, .service-report * {{
+                visibility: visible;
+            }}
+            .service-report {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                border: 0;
+                padding: 0;
+                overflow: visible;
+            }}
+            .service-print-actions {{
+                display: none;
+            }}
+            @page {{
+                size: A4 landscape;
+                margin: 10mm;
+            }}
+        }}
+    </style>
+    <div class="service-print-actions">
+        <button class="service-report-print-btn" onclick="window.print()">Print Cash Preparation Report</button>
+    </div>
+    <div class="service-report">
+        <h2>AONANG FIORE RESORT</h2>
+        <h3>{html.escape(title)}</h3>
+        <div class="printed">Printed Date: {html.escape(printed_at)}</div>
+
+        <h4>1. Service Amount Distribution</h4>
+        <table class="cash-report-table">
+            <thead>
+                <tr>
+                    <th>Net Service Amount</th>
+                    <th>Employee Count</th>
+                    <th>Total Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(distribution_body)}
+                <tr class="grand-total">
+                    <td>Total</td>
+                    <td class="num">{int(total_employees or 0):,}</td>
+                    <td class="num">{format_baht(grand_total)}</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="summary-block">
+            <div>Total Employees: {int(total_employees or 0):,}</div>
+            <div>Grand Total: {format_baht(grand_total)} Baht</div>
+        </div>
+
+        <h4>2. Cash Denomination Summary</h4>
+        <table class="cash-report-table">
+            <thead>
+                <tr>
+                    <th>Denomination</th>
+                    <th>Quantity</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(cash_body)}
+                <tr class="grand-total">
+                    <td>Grand Total</td>
+                    <td></td>
+                    <td class="num">{format_baht(grand_total)}</td>
+                </tr>
+            </tbody>
+        </table>
+        {service_report_signature_html()}
+    </div>"""
+
+def render_cash_preparation_report(reports, selected_month):
+    report_html = cash_preparation_report_html(reports, selected_month)
+    components.html(report_html, height=820, scrolling=True)
+
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
     st.caption("Service setup, calculation, and reports")
@@ -778,8 +970,7 @@ def render_service_setup():
                 st.metric("Total Employees", reports.get("total_employees", 0))
 
                 st.markdown("### Cash Preparation Report")
-                st.dataframe(pd.DataFrame(reports.get("cash_preparation", [])), use_container_width=True)
-                st.metric("Grand Total", f"{round_baht(reports.get('cash_grand_total', 0)):,.0f}")
+                render_cash_preparation_report(reports, selected_report_month)
             except Exception as e:
                 st.info(f"ยังไม่มีข้อมูล Service Calculation สำหรับเดือนนี้: {e}")
 

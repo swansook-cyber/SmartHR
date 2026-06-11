@@ -834,7 +834,7 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         distribution[amount] = distribution.get(amount, 0) + 1
 
     distribution_summary = [
-        {"Net Service Amount": amount, "Employee Count": count}
+        {"Net Service Amount": amount, "Employee Count": count, "Total Amount": amount * count}
         for amount, count in sorted(distribution.items(), key=lambda item: item[0], reverse=True)
     ]
 
