@@ -1909,7 +1909,7 @@ elif st.session_state["role"] == "admin":
                     base_salary = st.number_input("ฐานเงินเดือน", min_value=0.0, step=1000.0)
                     account_no = st.text_input("เลขที่บัญชี")
                     is_sso = st.checkbox("หักประกันสังคม", value=True)
-                    service_type = st.selectbox("Service Type", ["AUTO", "FIXED", "NONE"])
+                    service_type = st.selectbox("Service Type", ["AUTO", "FIXED_50", "FIXED", "NONE"])
                     service_percent = st.number_input("Service Percent", min_value=0.0, max_value=100.0, value=100.0, step=5.0)
                 
                 submit_btn = st.form_submit_button("💾 บันทึกข้อมูล")
@@ -2016,7 +2016,7 @@ elif st.session_state["role"] == "admin":
                             edit_tax_info = st.text_input("ลดหย่อนภาษี", value=emp_data.get("tax_info", ""), key=employee_edit_key(emp_code_key, "tax_info"))
 
                         col_service1, col_service2 = st.columns(2)
-                        service_options = ["AUTO", "FIXED", "NONE"]
+                        service_options = ["AUTO", "FIXED_50", "FIXED", "NONE"]
                         try: service_index = service_options.index(emp_data.get("service_type", "AUTO"))
                         except: service_index = 0
                         with col_service1:

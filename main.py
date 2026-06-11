@@ -522,6 +522,8 @@ def calculate_service_weight(emp, service_month):
     service_type = str(emp.service_type or "AUTO").upper()
     if service_type == "NONE":
         return 0.0
+    if service_type == "FIXED_50":
+        return 0.5
     if service_type == "FIXED":
         return float(emp.service_percent or 0) / 100.0
 
@@ -641,6 +643,8 @@ def service_deposit_total_before(session, emp_code, service_month_id, current_se
     return total
 
 def default_service_deposit(emp, service_month, service_weight, prior_deposit_total=0):
+    if str(getattr(emp, "service_type", "AUTO") or "AUTO").upper() != "AUTO":
+        return 0
     if service_weight <= 0:
         return 0
     if prior_deposit_total >= 1500:
@@ -1098,7 +1102,13 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         evaluation_percent = float(normalized.get("evaluation_percent", 0.0) or 0.0)
         deposit_deduction = round_baht(normalized.get("deposit_deduction", 0.0))
         prior_deposit_total = service_deposit_total_before(session, normalized.get("emp_code", ""), service_month_id, service_month)
+        service_type = str(getattr(employee, "service_type", normalized.get("service_type", "AUTO")) or "AUTO").upper()
 
+        if service_type != "AUTO" and deposit_deduction != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deposit deduction mismatch for {normalized.get('emp_code', '')}: service type {service_type} is not eligible for automatic deposit"
+            )
         if service_weight <= 0 and deposit_deduction != 0:
             raise HTTPException(
                 status_code=400,
