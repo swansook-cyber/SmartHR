@@ -4,6 +4,7 @@ import requests
 import io
 import datetime
 import html
+import streamlit.components.v1 as components
 from reportlab.lib.pagesizes import letter, A4, landscape
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
@@ -122,12 +123,20 @@ def service_cash_report(total_amount):
 def format_baht(value):
     return f"{round_baht(value):,.0f}"
 
+def service_report_rates(rows, summary):
+    derived_rates = []
+    for row in rows:
+        service_percent = float(row.get("service_percent", 0) or 0)
+        income_amount = round_baht(row.get("income_amount", 0))
+        if service_percent > 0 and income_amount > 0:
+            derived_rates.append(income_amount / (service_percent / 100.0))
+    full_rate = round_baht(derived_rates[0]) if derived_rates else round_baht(summary.get("service_rate", 0))
+    return round_baht(full_rate * 0.50), full_rate
+
 def service_detail_report_html(reports, selected_month):
     rows = reports.get("service_detail", [])
     summary = reports.get("summary", {})
-    service_rate = round_baht(summary.get("service_rate", 0))
-    half_rate = round_baht(service_rate * 0.50)
-    full_rate = service_rate
+    half_rate, full_rate = service_report_rates(rows, summary)
     title = f"Service Charge {selected_month['month']} {selected_month['year']}"
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     columns = [
@@ -213,8 +222,7 @@ def service_detail_report_html(reports, selected_month):
         '<div>_________________<br>Authorized By (President)</div>'
         '</div>'
     )
-    return f"""
-    <style>
+    return f"""<style>
         .service-print-actions {{
             margin: 0.5rem 0 1rem 0;
         }}
@@ -347,8 +355,11 @@ def service_detail_report_html(reports, selected_month):
             <div>Actual Employee Paid: {format_baht(summary.get('actual_employee_paid', grand_totals['net_service']))} Baht</div>
         </div>
         {signature_html}
-    </div>
-    """
+    </div>"""
+
+def render_service_detail_report(reports, selected_month):
+    report_html = service_detail_report_html(reports, selected_month)
+    components.html(report_html, height=900, scrolling=True)
 
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
@@ -569,7 +580,7 @@ def render_service_setup():
             try:
                 reports = api_get_json(service_api_path(f"/reports/{selected_report_month['id']}"))
                 st.markdown("### Service Detail Report")
-                st.markdown(service_detail_report_html(reports, selected_report_month), unsafe_allow_html=True)
+                render_service_detail_report(reports, selected_report_month)
 
                 st.markdown("### Distribution Summary")
                 st.dataframe(pd.DataFrame(reports.get("distribution_summary", [])), use_container_width=True)
