@@ -128,6 +128,31 @@ def round_baht(value):
 def service_month_label(item):
     return f"{item['month']}-{item['year']}"
 
+def service_total_signature(employee_pool, actual_paid):
+    employee_pool = round_baht(employee_pool)
+    actual_paid = round_baht(actual_paid)
+    return {
+        "employee_pool": employee_pool,
+        "actual_employee_paid": actual_paid,
+        "balance_returned_to_resort": round_baht(employee_pool - actual_paid),
+    }
+
+def service_summary_signature(summary):
+    return {
+        "employee_pool": round_baht(summary.get("employee_pool", 0)),
+        "actual_employee_paid": round_baht(summary.get("actual_employee_paid", 0)),
+        "balance_returned_to_resort": round_baht(summary.get("balance_returned_to_resort", 0)),
+    }
+
+def assert_service_total_consistency(preview_totals, saved_summary, reloaded_summary=None):
+    saved_totals = service_summary_signature(saved_summary)
+    if preview_totals != saved_totals:
+        raise ValueError(f"Preview totals {preview_totals} do not match saved totals {saved_totals}")
+    if reloaded_summary is not None:
+        reloaded_totals = service_summary_signature(reloaded_summary)
+        if preview_totals != reloaded_totals:
+            raise ValueError(f"Preview totals {preview_totals} do not match reloaded totals {reloaded_totals}")
+
 def recalculate_service_rows(rows, service_rate):
     recalculated = []
     for row in rows:
@@ -1066,12 +1091,20 @@ def render_service_setup():
 
                 if st.button("💾 Save Service Calculation", type="primary", use_container_width=True, disabled=actual_paid > employee_pool):
                     payload = {"manual_service_rate": manual_rate_payload, "employees": recalculated_rows, "audit_username": current_username()}
+                    preview_totals = service_total_signature(employee_pool, actual_paid)
                     try:
                         save_path = service_api_path(f"/calculate/{selected_month['id']}/save")
                         res = requests.post(f"{API_URL}{save_path}", json=payload, timeout=REQUEST_TIMEOUT)
                         if res.status_code == 200:
+                            save_result = res.json()
                             clear_api_cache()
-                            st.success(res.json()["message"])
+                            reloaded_reports = api_get_json(service_api_path(f"/reports/{selected_month['id']}"))
+                            assert_service_total_consistency(
+                                preview_totals,
+                                save_result.get("summary", {}),
+                                reloaded_reports.get("summary", {})
+                            )
+                            st.success(save_result["message"])
                             st.rerun()
                         else:
                             st.error(f"❌ เกิดข้อผิดพลาด: {res.text}")

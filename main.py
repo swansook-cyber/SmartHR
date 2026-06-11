@@ -766,6 +766,26 @@ def service_summary(service_month, rows):
         "exceeds_employee_pool": actual_paid > round_baht(employee_pool)
     }
 
+def service_summary_totals(summary):
+    return {
+        "employee_pool": round_baht(summary.get("employee_pool", 0)),
+        "actual_employee_paid": round_baht(summary.get("actual_employee_paid", 0)),
+        "balance_returned_to_resort": round_baht(summary.get("balance_returned_to_resort", 0)),
+    }
+
+def validate_service_summary_consistency(preview_summary, saved_summary):
+    preview_totals = service_summary_totals(preview_summary)
+    saved_totals = service_summary_totals(saved_summary)
+    if preview_totals != saved_totals:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Service calculation consistency error: preview totals do not match saved totals",
+                "preview_totals": preview_totals,
+                "saved_totals": saved_totals,
+            }
+        )
+
 def service_report_deduction_remarks(row):
     remarks = []
     if round_baht(row.get("sick_deduction", 0)) > 0:
@@ -1058,11 +1078,6 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
 
     session.query(db.ServiceEmployee).filter(db.ServiceEmployee.service_month_id == service_month_id).delete()
     for row in rows:
-        deposit_deduction = round_baht(row.get("deposit_deduction", 0.0))
-        service_weight = float(row.get("service_weight", 0.0) or 0.0)
-        if service_weight <= 0:
-            deposit_deduction = 0
-
         service_employee = db.ServiceEmployee(
             service_month_id=service_month_id,
             emp_code=str(row.get("emp_code", "")),
@@ -1084,11 +1099,25 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             late_deduction=round_baht(row.get("late_deduction", 0.0)),
             evaluation_percent=float(row.get("evaluation_percent", 0.0) or 0.0),
             evaluation_deduction=round_baht(row.get("evaluation_deduction", 0.0)),
-            deposit_deduction=deposit_deduction,
+            deposit_deduction=round_baht(row.get("deposit_deduction", 0.0)),
             net_service=round_baht(row.get("net_service", 0.0)),
             notes=str(row.get("notes", "") or "")
         )
         session.add(service_employee)
+
+    session.flush()
+    saved_rows = session.query(db.ServiceEmployee).filter(
+        db.ServiceEmployee.service_month_id == service_month_id
+    ).all()
+    saved_summary = service_summary(
+        service_month,
+        [serialize_service_employee(row) for row in saved_rows]
+    )
+    try:
+        validate_service_summary_consistency(summary, saved_summary)
+    except HTTPException:
+        session.rollback()
+        raise
 
     session.commit()
     write_audit_log(
