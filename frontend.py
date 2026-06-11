@@ -625,29 +625,50 @@ def cash_preparation_report_html(reports, selected_month):
             font-weight: 500;
         }}
         .service-report h4 {{
-            margin: 18px 0 6px 0;
+            margin: 0 0 6px 0;
             font-size: 14px;
         }}
         .service-report .printed {{
             font-size: 12px;
             margin-bottom: 10px;
         }}
+        .cash-report-grid {{
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 14px;
+            align-items: start;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }}
+        .cash-report-panel {{
+            border: 1px solid #d4d4d4;
+            padding: 10px;
+            page-break-inside: avoid;
+            break-inside: avoid;
+            min-width: 0;
+        }}
         .cash-report-table {{
             width: 100%;
             border-collapse: collapse;
-            font-size: 12px;
+            font-size: 11px;
         }}
         .cash-report-table th,
         .cash-report-table td {{
             border-bottom: 1px solid #e2e2e2;
-            padding: 6px 5px;
+            padding: 5px 4px;
             vertical-align: top;
+            page-break-inside: avoid;
+            break-inside: avoid;
         }}
         .cash-report-table th {{
             border-top: 1px solid #111;
             border-bottom: 1px solid #111;
             text-align: left;
             font-weight: 700;
+        }}
+        .cash-report-table tr {{
+            page-break-inside: avoid;
+            break-inside: avoid;
         }}
         .cash-report-table .num {{
             text-align: right;
@@ -659,17 +680,26 @@ def cash_preparation_report_html(reports, selected_month):
             border-bottom: 3px double #111;
         }}
         .summary-block {{
-            margin-top: 10px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 14px;
+            padding-top: 8px;
+            border-top: 1px solid #777;
             font-size: 13px;
             line-height: 1.7;
+            page-break-inside: avoid;
+            break-inside: avoid;
         }}
         .signature-row {{
             display: grid;
             grid-template-columns: repeat(5, 1fr);
             gap: 12px;
-            margin-top: 70px;
+            margin-top: 46px;
             text-align: center;
             font-size: 12px;
+            page-break-inside: avoid;
+            break-inside: avoid;
         }}
         @media print {{
             body * {{
@@ -690,6 +720,14 @@ def cash_preparation_report_html(reports, selected_month):
             .service-print-actions {{
                 display: none;
             }}
+            .cash-report-grid,
+            .cash-report-panel,
+            .summary-block,
+            .signature-row,
+            .grand-total {{
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }}
             @page {{
                 size: A4 landscape;
                 margin: 10mm;
@@ -704,47 +742,54 @@ def cash_preparation_report_html(reports, selected_month):
         <h3>{html.escape(title)}</h3>
         <div class="printed">Printed Date: {html.escape(printed_at)}</div>
 
-        <h4>1. Service Amount Distribution</h4>
-        <table class="cash-report-table">
-            <thead>
-                <tr>
-                    <th>Net Service Amount</th>
-                    <th>Employee Count</th>
-                    <th>Total Amount</th>
-                </tr>
-            </thead>
-            <tbody>
-                {''.join(distribution_body)}
-                <tr class="grand-total">
-                    <td>Total</td>
-                    <td class="num">{int(total_employees or 0):,}</td>
-                    <td class="num">{format_baht(grand_total)}</td>
-                </tr>
-            </tbody>
-        </table>
+        <div class="cash-report-grid">
+            <section class="cash-report-panel">
+                <h4>Service Amount Distribution</h4>
+                <table class="cash-report-table">
+                    <thead>
+                        <tr>
+                            <th>Net Service Amount</th>
+                            <th>Employee Count</th>
+                            <th>Total Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(distribution_body)}
+                        <tr class="grand-total">
+                            <td>Total</td>
+                            <td class="num">{int(total_employees or 0):,}</td>
+                            <td class="num">{format_baht(grand_total)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="cash-report-panel">
+                <h4>Cash Denomination Summary</h4>
+                <table class="cash-report-table">
+                    <thead>
+                        <tr>
+                            <th>Denomination</th>
+                            <th>Quantity</th>
+                            <th>Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(cash_body)}
+                        <tr class="grand-total">
+                            <td>Grand Total</td>
+                            <td></td>
+                            <td class="num">{format_baht(grand_total)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        </div>
+
         <div class="summary-block">
             <div>Total Employees: {int(total_employees or 0):,}</div>
             <div>Grand Total: {format_baht(grand_total)} Baht</div>
         </div>
-
-        <h4>2. Cash Denomination Summary</h4>
-        <table class="cash-report-table">
-            <thead>
-                <tr>
-                    <th>Denomination</th>
-                    <th>Quantity</th>
-                    <th>Amount</th>
-                </tr>
-            </thead>
-            <tbody>
-                {''.join(cash_body)}
-                <tr class="grand-total">
-                    <td>Grand Total</td>
-                    <td></td>
-                    <td class="num">{format_baht(grand_total)}</td>
-                </tr>
-            </tbody>
-        </table>
         {service_report_signature_html()}
     </div>"""
 
