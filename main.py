@@ -164,6 +164,7 @@ def update_employee(emp_code: str, data: dict, session: Session = Depends(get_db
     if "tax_info" in data: emp.tax_info = data["tax_info"]
     if "base_salary" in data: emp.base_salary = float(data["base_salary"])
     if "account_no" in data: emp.account_no = data["account_no"]
+    if "start_date" in data: emp.start_date = data["start_date"]
     if "is_active" in data: emp.is_active = data["is_active"]
     if "is_sso" in data: emp.is_sso = data["is_sso"]
     if "machine_id" in data: emp.machine_id = data["machine_id"]

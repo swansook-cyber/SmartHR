@@ -29,6 +29,20 @@ def api_get_json(path):
 def clear_api_cache():
     api_get_json.clear()
 
+def logout_user():
+    for key in ["authenticated", "role", "emp_code", "emp_name"]:
+        st.session_state.pop(key, None)
+
+def employee_edit_key(emp_code, field):
+    safe_code = re.sub(r"[^A-Za-z0-9_]", "_", str(emp_code))
+    return f"edit_emp_{safe_code}_{field}"
+
+def clear_employee_edit_state(emp_code):
+    prefix = employee_edit_key(emp_code, "")
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(prefix):
+            st.session_state.pop(key, None)
+
 def service_api_path(path=""):
     return f"{SERVICE_API_PREFIX}{path}"
 
@@ -1052,7 +1066,9 @@ elif st.session_state["role"] == "employee":
     col_title, col_logout = st.columns([8, 2])
     with col_title: st.title(f"👨‍💼 ยินดีต้อนรับ, คุณ {st.session_state['emp_name']}")
     with col_logout:
-        if st.button("🚪 ออกจากระบบ", use_container_width=True): st.session_state.clear(); st.rerun()
+        if st.button("🚪 ออกจากระบบ", use_container_width=True):
+            logout_user()
+            st.rerun()
     st.markdown("---")
     payroll_slip_tab, service_slip_tab = st.tabs(["📄 Payroll Slip", "🧾 Service Charge Slip"])
 
@@ -1146,9 +1162,11 @@ elif st.session_state["role"] == "admin":
     col_title, col_logout = st.columns([8, 1])
     with col_title: st.title("🌴 ระบบจัดการเงินเดือน (HR Dashboard)")
     with col_logout:
-        if st.button("🚪 ออกจากระบบ", use_container_width=True): st.session_state.clear(); st.rerun()
+        if st.button("🚪 ออกจากระบบ", use_container_width=True):
+            logout_user()
+            st.rerun()
 
-    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)"])
+    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)"], key="admin_menu")
     if admin_menu == "Service Charge (Beta)":
         render_service_setup()
         st.stop()
@@ -1300,45 +1318,53 @@ elif st.session_state["role"] == "admin":
                 if not emp_list: st.warning("⚠️ ยังไม่มีข้อมูลพนักงานในระบบ")
                 else:
                     emp_options = {f"{e['emp_code']} : {e['first_name']} {e['last_name']}": e for e in emp_list}
-                    selected_emp_label = st.selectbox("🔍 ค้นหาพนักงานที่ต้องการแก้ไข", list(emp_options.keys()))
+                    selected_emp_label = st.selectbox("🔍 ค้นหาพนักงานที่ต้องการแก้ไข", list(emp_options.keys()), key="edit_employee_select")
                     emp_data = emp_options[selected_emp_label]
+                    emp_code_key = str(emp_data["emp_code"])
 
-                    with st.form("edit_emp_form"):
+                    if st.session_state.get("active_edit_emp_code") != emp_code_key:
+                        previous_emp_code = st.session_state.get("active_edit_emp_code")
+                        if previous_emp_code:
+                            clear_employee_edit_state(previous_emp_code)
+                        clear_employee_edit_state(emp_code_key)
+                        st.session_state["active_edit_emp_code"] = emp_code_key
+
+                    with st.form(f"edit_emp_form_{emp_code_key}"):
                         col1, col2, col3 = st.columns(3)
                         with col1: 
-                            st.text_input("รหัสพนักงาน", emp_data["emp_code"], disabled=True)
-                            edit_first_name = st.text_input("ชื่อจริง", emp_data["first_name"])
-                            edit_last_name = st.text_input("นามสกุล", emp_data["last_name"])
-                            edit_machine_id = st.text_input("รหัสเครื่องสแกนนิ้ว (Machine ID)", value=emp_data.get("machine_id", ""))
+                            st.text_input("รหัสพนักงาน", emp_data["emp_code"], disabled=True, key=employee_edit_key(emp_code_key, "emp_code"))
+                            edit_first_name = st.text_input("ชื่อจริง", value=emp_data.get("first_name", ""), key=employee_edit_key(emp_code_key, "first_name"))
+                            edit_last_name = st.text_input("นามสกุล", value=emp_data.get("last_name", ""), key=employee_edit_key(emp_code_key, "last_name"))
+                            edit_machine_id = st.text_input("รหัสเครื่องสแกนนิ้ว (Machine ID)", value=emp_data.get("machine_id", ""), key=employee_edit_key(emp_code_key, "machine_id"))
                         with col2:
                             try: default_dept_index = dept_options.index(emp_data["department"])
                             except: default_dept_index = 0
-                            edit_department = st.selectbox("แผนก", dept_options, index=default_dept_index)
-                            edit_position = st.text_input("ตำแหน่ง", emp_data["position"])
-                            edit_phone = st.text_input("เบอร์โทรศัพท์", emp_data["phone"])
+                            edit_department = st.selectbox("แผนก", dept_options, index=default_dept_index, key=employee_edit_key(emp_code_key, "department"))
+                            edit_position = st.text_input("ตำแหน่ง", value=emp_data.get("position", ""), key=employee_edit_key(emp_code_key, "position"))
+                            edit_phone = st.text_input("เบอร์โทรศัพท์", value=emp_data.get("phone", ""), key=employee_edit_key(emp_code_key, "phone"))
                         with col3: 
-                            edit_status = st.checkbox("สถานะ (ทำงานอยู่)", value=emp_data["is_active"])
-                            edit_sso = st.checkbox("หักประกันสังคม (SSO 5%)", value=emp_data.get("is_sso", True)) 
-                            edit_address = st.text_area("ที่อยู่", emp_data["address"], height=68)
+                            edit_status = st.checkbox("สถานะ (ทำงานอยู่)", value=emp_data.get("is_active", True), key=employee_edit_key(emp_code_key, "is_active"))
+                            edit_sso = st.checkbox("หักประกันสังคม (SSO 5%)", value=emp_data.get("is_sso", True), key=employee_edit_key(emp_code_key, "is_sso")) 
+                            edit_address = st.text_area("ที่อยู่", value=emp_data.get("address", ""), height=68, key=employee_edit_key(emp_code_key, "address"))
                             # 🟢 เพิ่ม วันเริ่มงาน เข้าไปในส่วนแก้ไข
                             try: current_start = datetime.datetime.strptime(emp_data.get('start_date', str(datetime.date.today())), '%Y-%m-%d').date()
                             except: current_start = datetime.date.today()
-                            edit_start_date = st.date_input("วันที่เริ่มงาน", value=current_start)
+                            edit_start_date = st.date_input("วันที่เริ่มงาน", value=current_start, key=employee_edit_key(emp_code_key, "start_date"))
                             
                         col4, col5 = st.columns(2)
-                        with col4: edit_base_salary = st.number_input("ฐานเงินเดือน", value=float(emp_data.get("base_salary", 0.0)), min_value=0.0, step=1000.0)
+                        with col4: edit_base_salary = st.number_input("ฐานเงินเดือน", value=float(emp_data.get("base_salary", 0.0)), min_value=0.0, step=1000.0, key=employee_edit_key(emp_code_key, "base_salary"))
                         with col5: 
-                            edit_account_no = st.text_input("เลขบัญชี", emp_data.get("account_no", ""))
-                            edit_tax_info = st.text_input("ลดหย่อนภาษี", emp_data.get("tax_info", ""))
+                            edit_account_no = st.text_input("เลขบัญชี", value=emp_data.get("account_no", ""), key=employee_edit_key(emp_code_key, "account_no"))
+                            edit_tax_info = st.text_input("ลดหย่อนภาษี", value=emp_data.get("tax_info", ""), key=employee_edit_key(emp_code_key, "tax_info"))
 
                         col_service1, col_service2 = st.columns(2)
                         service_options = ["AUTO", "FIXED", "NONE"]
                         try: service_index = service_options.index(emp_data.get("service_type", "AUTO"))
                         except: service_index = 0
                         with col_service1:
-                            edit_service_type = st.selectbox("Service Type", service_options, index=service_index)
+                            edit_service_type = st.selectbox("Service Type", service_options, index=service_index, key=employee_edit_key(emp_code_key, "service_type"))
                         with col_service2:
-                            edit_service_percent = st.number_input("Service Percent", value=float(emp_data.get("service_percent", 100.0)), min_value=0.0, max_value=100.0, step=5.0)
+                            edit_service_percent = st.number_input("Service Percent", value=float(emp_data.get("service_percent", 100.0)), min_value=0.0, max_value=100.0, step=5.0, key=employee_edit_key(emp_code_key, "service_percent"))
                             
                         if st.form_submit_button("🔄 อัปเดตข้อมูล", type="primary"):
                             update_payload = {
@@ -1359,8 +1385,15 @@ elif st.session_state["role"] == "admin":
                                 "start_date": str(edit_start_date) # 🟢 ส่งข้อมูลวันเริ่มงานกลับไป
                             }
                             res_update = requests.put(f"{API_URL}/employees/{emp_data['emp_code']}", json=update_payload, timeout=REQUEST_TIMEOUT)
-                            if res_update.status_code == 200: clear_api_cache(); st.success(res_update.json()["message"]); st.rerun() 
-                            else: st.error("❌ ขัดข้อง")
+                            if res_update.status_code == 200:
+                                clear_api_cache()
+                                clear_employee_edit_state(emp_code_key)
+                                st.session_state["employee_edit_success"] = res_update.json()["message"]
+                                st.rerun()
+                            else:
+                                st.error("❌ ขัดข้อง")
+                    if st.session_state.get("employee_edit_success"):
+                        st.success(st.session_state.pop("employee_edit_success"))
             except Exception: st.error("❌ เชื่อมต่อหลังบ้านไม่ได้")
             
         elif mode == "📄 โหลดรายงานพนักงาน":
