@@ -164,7 +164,8 @@ def recalculate_service_rows(rows, service_rate):
         evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
         deposit_deduction = round_baht(row.get("deposit_deduction", 0))
         prior_deposit_total = round_baht(row.get("prior_deposit_total", 0))
-        if service_weight <= 0 or prior_deposit_total >= 1500:
+        service_type = str(row.get("service_type", "AUTO") or "AUTO").upper()
+        if service_type != "AUTO" or service_weight <= 0 or prior_deposit_total >= 1500:
             deposit_deduction = 0
         else:
             deposit_deduction = min(deposit_deduction, 1500 - prior_deposit_total)

@@ -1020,7 +1020,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             if existing and not refresh_eligibility
             else default_service_deposit(emp, service_month, service_weight, prior_deposit_total)
         )
-        if service_weight <= 0:
+        if str(emp.service_type or "AUTO").upper() != "AUTO" or service_weight <= 0:
             deposit_deduction = 0
         notes = sanitize_service_manual_notes(existing.notes) if existing else ""
         gross_service = round_baht(selected_rate * service_weight)
