@@ -1792,15 +1792,7 @@ elif st.session_state["role"] == "employee":
                 with col2: st.metric("Total Deductions", f"{(my_service_data['sick_deduction'] + my_service_data['leave_hour_deduction'] + my_service_data['late_deduction'] + my_service_data['evaluation_deduction'] + my_service_data['deposit_deduction']):,.0f} บาท")
                 with col3: st.metric("Net Service", f"{my_service_data['net_service']:,.0f} บาท")
 
-                deduction_items = [
-                    ("Sick Deduction", my_service_data.get("sick_deduction", 0)),
-                    ("Leave Hour Deduction", my_service_data.get("leave_hour_deduction", 0)),
-                    ("Late Deduction", my_service_data.get("late_deduction", 0)),
-                    ("Evaluation Deduction", my_service_data.get("evaluation_deduction", 0)),
-                    ("Deposit Deduction", my_service_data.get("deposit_deduction", 0))
-                ]
-                non_zero_deductions = [f"{label}:{value:,.0f}" for label, value in deduction_items if value > 0]
-                deduction_text = ", ".join(non_zero_deductions) if non_zero_deductions else "No deductions"
+                deduction_text = my_service_data.get("deduction_remarks") or "No deductions"
                 remark_parts = [
                     f"Service Eligibility:{my_service_data.get('service_eligibility_percent', 0):g}%",
                     f"Eligible Service Month:{my_service_data.get('eligible_service_month', '-')}",

@@ -612,6 +612,7 @@ def payroll_service_inputs(session, service_month):
             "sick_days": float(row.sick_days or 0),
             "leave_days": float(row.unpaid_leave_days or 0),
             "leave_hours": float(row.leave_hours or 0),
+            "late_mins": float(row.late_mins or 0),
             "late_hours": float(row.late_mins or 0) / 60,
             "source": "Imported from Payroll",
             "payroll_cycle_id": int(cycle.latest_id or 0),
@@ -726,7 +727,9 @@ def serialize_service_employee(row):
         "notes": row.notes or ""
     }
 
-def serialize_service_slip(row, service_month, employee=None):
+def serialize_service_slip(row, service_month, employee=None, payroll_input=None):
+    payroll_input = payroll_input or {}
+    late_mins = payroll_input.get("late_mins")
     return {
         "service_month_id": service_month.id,
         "service_month": f"{service_month.month}-{service_month.year}",
@@ -739,12 +742,25 @@ def serialize_service_slip(row, service_month, employee=None):
         "service_eligibility_percent": round_baht(float(row.service_weight or 0) * 100),
         "eligible_service_month": eligible_service_month_index(employee, service_month) if employee else "",
         "gross_service": row.gross_service or 0.0,
+        "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
+        "leave_hours": row.leave_hours or 0.0,
         "leave_hour_deduction": row.leave_hour_deduction or 0.0,
+        "late_mins": late_mins,
+        "late_hours": row.late_hours or 0.0,
         "late_deduction": row.late_deduction or 0.0,
+        "evaluation_percent": row.evaluation_percent or 0.0,
         "evaluation_deduction": row.evaluation_deduction or 0.0,
         "deposit_deduction": row.deposit_deduction or 0.0,
         "net_service": row.net_service or 0.0,
+        "deduction_remarks": service_attendance_remarks({
+            "sick_days": row.sick_days or 0.0,
+            "leave_hours": row.leave_hours or 0.0,
+            "late_mins": late_mins,
+            "late_hours": row.late_hours or 0.0,
+            "evaluation_percent": row.evaluation_percent or 0.0,
+            "deposit_deduction": row.deposit_deduction or 0.0
+        }),
         "notes": row.notes or ""
     }
 
@@ -786,20 +802,43 @@ def validate_service_summary_consistency(preview_summary, saved_summary):
             }
         )
 
-def service_report_deduction_remarks(row):
+def format_service_remark_number(value):
+    value = float(value or 0)
+    if value.is_integer():
+        return f"{int(value):,}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+def service_attendance_remarks(row):
     remarks = []
-    if round_baht(row.get("sick_deduction", 0)) > 0:
-        remarks.append(f"Sick:{round_baht(row.get('sick_deduction', 0)):,.0f}")
-    if round_baht(row.get("leave_hour_deduction", 0)) > 0:
-        remarks.append(f"Leave Hour:{round_baht(row.get('leave_hour_deduction', 0)):,.0f}")
-    if round_baht(row.get("late_deduction", 0)) > 0:
-        remarks.append(f"Late:{round_baht(row.get('late_deduction', 0)):,.0f}")
-    if round_baht(row.get("evaluation_deduction", 0)) > 0:
-        remarks.append(f"Evaluation:{round_baht(row.get('evaluation_deduction', 0)):,.0f}")
+    sick_days = float(row.get("sick_days", 0) or 0)
+    leave_hours = float(row.get("leave_hours", 0) or 0)
+    late_mins = row.get("late_mins")
+    late_hours = float(row.get("late_hours", 0) or 0)
+    evaluation_percent = float(row.get("evaluation_percent", 0) or 0)
+    deposit_deduction = round_baht(row.get("deposit_deduction", 0))
+
+    if sick_days > 0:
+        unit = "day" if sick_days == 1 else "days"
+        remarks.append(f"Sick: {format_service_remark_number(sick_days)} {unit}")
+    if leave_hours > 0:
+        unit = "hour" if leave_hours == 1 else "hours"
+        remarks.append(f"Leave: {format_service_remark_number(leave_hours)} {unit}")
+    if late_mins not in [None, ""] and float(late_mins or 0) > 0:
+        remarks.append(f"Late: {format_service_remark_number(float(late_mins or 0))} mins")
+    elif late_hours > 0:
+        unit = "hour" if late_hours == 1 else "hours"
+        remarks.append(f"Late: {format_service_remark_number(late_hours)} {unit}")
+    if evaluation_percent > 0:
+        remarks.append(f"Evaluation: {format_service_remark_number(evaluation_percent)}%")
+    if deposit_deduction > 0:
+        remarks.append(f"Deposit: {deposit_deduction:,.0f}")
     return ", ".join(remarks)
 
-def serialize_service_detail_report(row, employee=None):
+def serialize_service_detail_report(row, employee=None, payroll_input=None):
     data = serialize_service_employee(row)
+    payroll_input = payroll_input or {}
+    if payroll_input.get("late_mins") not in [None, ""]:
+        data["late_mins"] = payroll_input.get("late_mins")
     display_first_name = getattr(employee, "first_name", None) if employee else None
     display_last_name = getattr(employee, "last_name", None) if employee else None
     display_department = getattr(employee, "department", None) if employee else None
@@ -808,7 +847,7 @@ def serialize_service_detail_report(row, employee=None):
     deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
     total_after_deduction = round_baht(data.get("gross_service", 0)) - deduction_amount
     notes = str(data.get("notes", "") or "").strip()
-    deduction_remarks = service_report_deduction_remarks(data)
+    deduction_remarks = service_attendance_remarks(data)
     remarks = ", ".join(part for part in [notes, deduction_remarks] if part)
     return {
         "emp_code": data.get("emp_code", ""),
@@ -979,6 +1018,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "leave_days": leave_days or 0.0,
             "leave_hours": amounts["leave_hours"],
             "leave_hour_deduction": amounts["leave_hour_deduction"],
+            "late_mins": payroll_input.get("late_mins") if payroll_input else None,
             "late_hours": amounts["late_hours"],
             "late_deduction": amounts["late_deduction"],
             "evaluation_percent": evaluation_percent or 0.0,
@@ -1153,7 +1193,14 @@ def get_all_service_slips(session: Session = Depends(get_db)):
         db.ServiceEmployee.service_month_id == db.ServiceMonth.id
     ).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc(), db.ServiceEmployee.emp_code.asc()).all()
     employees = {str(emp.emp_code): emp for emp in session.query(db.Employee).all()}
-    return [serialize_service_slip(row, service_month, employees.get(str(row.emp_code))) for row, service_month in rows]
+    payroll_inputs_by_month = {}
+    result = []
+    for row, service_month in rows:
+        if service_month.id not in payroll_inputs_by_month:
+            payroll_inputs_by_month[service_month.id] = payroll_service_inputs(session, service_month)
+        payroll_input = payroll_inputs_by_month[service_month.id].get(str(row.emp_code), {})
+        result.append(serialize_service_slip(row, service_month, employees.get(str(row.emp_code)), payroll_input))
+    return result
 
 @app.get("/api/service/slips/{emp_code}")
 @app.get("/service/slips/{emp_code}")
@@ -1165,7 +1212,14 @@ def get_employee_service_slips(emp_code: str, session: Session = Depends(get_db)
         db.ServiceEmployee.emp_code == emp_code
     ).order_by(db.ServiceMonth.year.desc(), db.ServiceMonth.id.desc()).all()
     employee = session.query(db.Employee).filter(db.Employee.emp_code == emp_code).first()
-    return [serialize_service_slip(row, service_month, employee) for row, service_month in rows]
+    payroll_inputs_by_month = {}
+    result = []
+    for row, service_month in rows:
+        if service_month.id not in payroll_inputs_by_month:
+            payroll_inputs_by_month[service_month.id] = payroll_service_inputs(session, service_month)
+        payroll_input = payroll_inputs_by_month[service_month.id].get(str(row.emp_code), {})
+        result.append(serialize_service_slip(row, service_month, employee, payroll_input))
+    return result
 
 @app.get("/api/service/reports/{service_month_id}")
 @app.get("/service/reports/{service_month_id}")
@@ -1180,6 +1234,7 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
     ).all()
     employees = {str(emp.emp_code): emp for emp in session.query(db.Employee).all()}
     rows = [serialize_service_employee(row) for row in service_rows]
+    payroll_inputs = payroll_service_inputs(session, service_month)
     payroll_cycle = latest_payroll_cycle_for_service_month(session, service_month)
     payroll_transactions = []
     if payroll_cycle:
@@ -1219,7 +1274,7 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         "service_month": serialize_service_month(service_month),
         "service_detail": [
             {
-                **serialize_service_detail_report(row, employees.get(str(row.emp_code))),
+                **serialize_service_detail_report(row, employees.get(str(row.emp_code)), payroll_inputs.get(str(row.emp_code), {})),
                 **({"payroll_order": payroll_order[str(row.emp_code)]} if str(row.emp_code) in payroll_order else {})
             }
             for row in service_rows
