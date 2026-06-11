@@ -375,6 +375,173 @@ def render_service_detail_report(reports, selected_month):
     report_html = service_detail_report_html(reports, selected_month)
     components.html(report_html, height=900, scrolling=True)
 
+def service_report_signature_html():
+    return (
+        '<div class="signature-row">'
+        '<div>_________________<br>Prepared By (HR)</div>'
+        '<div>_________________<br>Checked By (ACC)</div>'
+        '<div>_________________<br>Checked By (GM)</div>'
+        '<div>_________________<br>Approved By (VP)</div>'
+        '<div>_________________<br>Authorized By (President)</div>'
+        '</div>'
+    )
+
+def service_summary_report_html(summary_report):
+    rows = summary_report.get("rows", [])
+    total = summary_report.get("yearly_total", {})
+    year = summary_report.get("year", "")
+    title = f"Service Charge Summary {year}"
+    printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    columns = [
+        ("month", "Month"),
+        ("room_service", "Room Service"),
+        ("fb_service", "F&B Service"),
+        ("zipline_service", "Zipline Service"),
+        ("other_service", "Other Service"),
+        ("total_service", "Total Service"),
+        ("employee_pool", "Employee Pool (60%)"),
+        ("actual_employee_paid", "Actual Employee Paid"),
+        ("welfare_fund", "Welfare Fund (20%)"),
+        ("employee_deposit_total", "Employee Deposit Total"),
+        ("resort_fund", "Resort Fund (20%)"),
+        ("balance_returned_to_resort", "Balance Returned To Resort")
+    ]
+    numeric_columns = {key for key, _label in columns if key != "month"}
+    header_cells = "".join(f"<th>{html.escape(label)}</th>" for _key, label in columns)
+    body_rows = []
+    for row in rows:
+        cells = []
+        for key, _label in columns:
+            if key in numeric_columns:
+                cells.append(f"<td class='num'>{format_baht(row.get(key, 0))}</td>")
+            else:
+                cells.append(f"<td>{html.escape(str(row.get(key, '') or ''))}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    total_cells = []
+    for key, _label in columns:
+        if key == "month":
+            total_cells.append("<td class='subtotal-label'>Yearly Total</td>")
+        elif key in numeric_columns:
+            total_cells.append(f"<td class='num subtotal'>{format_baht(total.get(key, 0))}</td>")
+        else:
+            total_cells.append("<td></td>")
+
+    return f"""<style>
+        .service-print-actions {{
+            margin: 0.5rem 0 1rem 0;
+        }}
+        .service-report-print-btn {{
+            border: 1px solid #2f6f5e;
+            background: #2f6f5e;
+            color: white;
+            padding: 0.45rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }}
+        .service-report {{
+            background: white;
+            color: #111;
+            padding: 18px;
+            border: 1px solid #d8d8d8;
+            overflow-x: auto;
+            font-family: Arial, sans-serif;
+        }}
+        .service-report h2 {{
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: 0;
+        }}
+        .service-report h3 {{
+            margin: 2px 0 4px 0;
+            font-size: 17px;
+            font-weight: 500;
+        }}
+        .service-report .printed {{
+            font-size: 12px;
+            margin-bottom: 10px;
+        }}
+        .service-summary-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }}
+        .service-summary-table th,
+        .service-summary-table td {{
+            border-bottom: 1px solid #e2e2e2;
+            padding: 5px 4px;
+            vertical-align: top;
+        }}
+        .service-summary-table th {{
+            border-top: 1px solid #111;
+            border-bottom: 1px solid #111;
+            text-align: left;
+            font-weight: 700;
+        }}
+        .service-summary-table .num {{
+            text-align: right;
+            white-space: nowrap;
+        }}
+        .grand-total td {{
+            font-weight: 700;
+            border-top: 2px solid #111;
+            border-bottom: 3px double #111;
+        }}
+        .signature-row {{
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-top: 70px;
+            text-align: center;
+            font-size: 12px;
+        }}
+        @media print {{
+            body * {{
+                visibility: hidden;
+            }}
+            .service-report, .service-report * {{
+                visibility: visible;
+            }}
+            .service-report {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                border: 0;
+                padding: 0;
+                overflow: visible;
+            }}
+            .service-print-actions {{
+                display: none;
+            }}
+            @page {{
+                size: A4 landscape;
+                margin: 10mm;
+            }}
+        }}
+    </style>
+    <div class="service-print-actions">
+        <button class="service-report-print-btn" onclick="window.print()">Print Service Summary Report</button>
+    </div>
+    <div class="service-report">
+        <h2>AONANG FIORE RESORT</h2>
+        <h3>{html.escape(title)}</h3>
+        <div class="printed">Printed Date: {html.escape(printed_at)}</div>
+        <table class="service-summary-table">
+            <thead><tr>{header_cells}</tr></thead>
+            <tbody>
+                {''.join(body_rows)}
+                <tr class="grand-total">{''.join(total_cells)}</tr>
+            </tbody>
+        </table>
+        {service_report_signature_html()}
+    </div>"""
+
+def render_service_summary_report(summary_report):
+    report_html = service_summary_report_html(summary_report)
+    components.html(report_html, height=760, scrolling=True)
+
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
     st.caption("Service setup, calculation, and reports")
@@ -589,6 +756,16 @@ def render_service_setup():
             st.info("กรุณาสร้าง Service Setup ก่อน")
         else:
             service_options = {service_month_label(item): item for item in service_months}
+            year_options = sorted({int(item["year"]) for item in service_months}, reverse=True)
+            selected_summary_year = st.selectbox("Select Year", year_options, key="summary_service_year")
+            try:
+                summary_report = api_get_json(service_api_path(f"/reports/summary/{selected_summary_year}"))
+                st.markdown("### Service Summary Report")
+                render_service_summary_report(summary_report)
+            except Exception as e:
+                st.info(f"ยังไม่มีข้อมูล Service Summary สำหรับปีนี้: {e}")
+
+            st.markdown("---")
             selected_report_label = st.selectbox("Select Service Month", list(service_options.keys()), key="report_service_month")
             selected_report_month = service_options[selected_report_label]
             try:

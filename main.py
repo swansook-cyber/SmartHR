@@ -529,6 +529,29 @@ def serialize_service_detail_report(row, employee=None):
         "remarks": remarks
     }
 
+def serialize_service_summary_report(service_month, service_rows):
+    month_data = serialize_service_month(service_month)
+    actual_paid = sum(round_baht(row.net_service or 0) for row in service_rows)
+    deposit_total = sum(round_baht(row.deposit_deduction or 0) for row in service_rows)
+    employee_pool = round_baht(month_data["employee_pool"])
+    return {
+        "service_month_id": service_month.id,
+        "month": service_month.month,
+        "year": service_month.year,
+        "month_no": month_number(service_month.month),
+        "room_service": round_baht(month_data["room_service"]),
+        "fb_service": round_baht(month_data["fb_service"]),
+        "zipline_service": round_baht(month_data["zipline_service"]),
+        "other_service": round_baht(month_data["other_service"]),
+        "total_service": round_baht(month_data["total_service"]),
+        "employee_pool": employee_pool,
+        "actual_employee_paid": actual_paid,
+        "welfare_fund": round_baht(month_data["welfare_fund"]),
+        "employee_deposit_total": deposit_total,
+        "resort_fund": round_baht(month_data["resort_fund"]),
+        "balance_returned_to_resort": round_baht(employee_pool - actual_paid)
+    }
+
 @app.get("/api/service/months")
 @app.get("/service/months")
 def get_service_months(session: Session = Depends(get_db)):
@@ -836,6 +859,36 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         "total_employees": len(rows),
         "cash_preparation": cash_rows,
         "cash_grand_total": sum(row["Amount"] for row in cash_rows)
+    }
+
+@app.get("/api/service/reports/summary/{year}")
+@app.get("/service/reports/summary/{year}")
+def get_service_summary_report(year: int, session: Session = Depends(get_db)):
+    service_months = session.query(db.ServiceMonth).filter(
+        db.ServiceMonth.year == year
+    ).all()
+    service_months = sorted(service_months, key=lambda item: month_number(item.month))
+
+    summary_rows = []
+    for service_month in service_months:
+        service_rows = session.query(db.ServiceEmployee).filter(
+            db.ServiceEmployee.service_month_id == service_month.id
+        ).all()
+        summary_rows.append(serialize_service_summary_report(service_month, service_rows))
+
+    total_fields = [
+        "room_service", "fb_service", "zipline_service", "other_service",
+        "total_service", "employee_pool", "actual_employee_paid",
+        "welfare_fund", "employee_deposit_total", "resort_fund",
+        "balance_returned_to_resort"
+    ]
+    yearly_total = {field: sum(round_baht(row.get(field, 0)) for row in summary_rows) for field in total_fields}
+    yearly_total.update({"month": "Yearly Total", "year": year})
+
+    return {
+        "year": year,
+        "rows": summary_rows,
+        "yearly_total": yearly_total
     }
 
 # ==========================================
