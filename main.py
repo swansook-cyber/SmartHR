@@ -5,6 +5,7 @@ import database as db
 from typing import List
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
+import json
 
 app = FastAPI()
 
@@ -61,6 +62,56 @@ def get_db():
     finally:
         db_session.close()
 
+def audit_log(session, username="-", action="", module="", reference_id="", details=""):
+    try:
+        log = db.AuditLog(
+            timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            username=str(username or "-")[:200],
+            action=str(action or "")[:200],
+            module=str(module or "")[:100],
+            reference_id=str(reference_id or "")[:200],
+            details=str(details or "")[:1000]
+        )
+        session.add(log)
+    except:
+        pass
+
+def audit_log_commit(session, username="-", action="", module="", reference_id="", details=""):
+    try:
+        audit_log(session, username, action, module, reference_id, details)
+        session.commit()
+    except:
+        try:
+            session.rollback()
+        except:
+            pass
+
+def write_audit_log(username="-", action="", module="", reference_id="", details=""):
+    audit_session = db.SessionLocal()
+    try:
+        audit_log(audit_session, username, action, module, reference_id, details)
+        audit_session.commit()
+    except:
+        try:
+            audit_session.rollback()
+        except:
+            pass
+    finally:
+        try:
+            audit_session.close()
+        except:
+            pass
+
+def audit_details(data, keys=None):
+    try:
+        if keys:
+            payload = {key: data.get(key) for key in keys if key in data}
+        else:
+            payload = data
+        return json.dumps(payload, ensure_ascii=False, default=str)
+    except:
+        return str(data)
+
 # ==========================================
 # 📜 ระบบบันทึกประวัติการใช้งาน (Access Logs)
 # ==========================================
@@ -84,6 +135,49 @@ def get_access_logs(limit: int = 200, session: Session = Depends(get_db)):
             "user": log.user,
             "action": log.action,
             "timestamp": log.timestamp
+        }
+        for log in logs
+    ]
+
+@app.post("/audit-logs/")
+def create_audit_log(data: dict, session: Session = Depends(get_db)):
+    audit_log_commit(
+        session,
+        username=data.get("username", "-"),
+        action=data.get("action", ""),
+        module=data.get("module", ""),
+        reference_id=data.get("reference_id", ""),
+        details=data.get("details", "")
+    )
+    return {"message": "audit logged"}
+
+@app.get("/audit-logs/")
+def get_audit_logs(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    username: str | None = None,
+    module: str | None = None,
+    limit: int = 1000,
+    session: Session = Depends(get_db)
+):
+    query = session.query(db.AuditLog)
+    if start_date:
+        query = query.filter(db.AuditLog.timestamp >= f"{start_date} 00:00:00")
+    if end_date:
+        query = query.filter(db.AuditLog.timestamp <= f"{end_date} 23:59:59")
+    if username:
+        query = query.filter(db.AuditLog.username.like(f"%{username}%"))
+    if module and module != "All":
+        query = query.filter(db.AuditLog.module == module)
+    logs = query.order_by(db.AuditLog.id.desc()).limit(limit).all()
+    return [
+        {
+            "timestamp": log.timestamp,
+            "username": log.username,
+            "module": log.module,
+            "action": log.action,
+            "reference_id": log.reference_id,
+            "details": log.details
         }
         for log in logs
     ]
@@ -147,6 +241,13 @@ def create_employee(data: dict, session: Session = Depends(get_db)):
     )
     session.add(new_emp)
     session.commit()
+    write_audit_log(
+        data.get("audit_username", "-"),
+        "Create Employee",
+        "Employee",
+        data.get("emp_code", ""),
+        audit_details(data, ["emp_code", "first_name", "last_name", "department", "position", "service_type", "service_percent"])
+    )
     return {"message": "เพิ่มพนักงานสำเร็จ"}
 
 @app.put("/employees/{emp_code}")
@@ -172,7 +273,30 @@ def update_employee(emp_code: str, data: dict, session: Session = Depends(get_db
     if "service_percent" in data: emp.service_percent = float(data["service_percent"])
     
     session.commit()
+    write_audit_log(
+        data.get("audit_username", "-"),
+        "Update Employee",
+        "Employee",
+        emp_code,
+        audit_details(data, ["first_name", "last_name", "department", "position", "phone", "start_date", "is_active", "is_sso", "service_type", "service_percent"])
+    )
     return {"message": "อัปเดตข้อมูลพนักงานสำเร็จ"}
+
+@app.delete("/employees/{emp_code}")
+def delete_employee(emp_code: str, username: str | None = None, session: Session = Depends(get_db)):
+    emp = session.query(db.Employee).filter(db.Employee.emp_code == emp_code).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="ไม่พบพนักงาน")
+    details = audit_details({
+        "emp_code": emp.emp_code,
+        "first_name": emp.first_name,
+        "last_name": emp.last_name,
+        "department": emp.department
+    })
+    session.delete(emp)
+    session.commit()
+    write_audit_log(username or "-", "Delete Employee", "Employee", emp_code, details)
+    return {"message": "ลบข้อมูลพนักงานสำเร็จ"}
 
 # 🟢 ฟีเจอร์ Upsert (เพิ่มคนใหม่ + อัปเดตคนเดิม) รับข้อมูล List ได้โดยตรง
 @app.post("/employees/bulk")
@@ -180,8 +304,10 @@ def bulk_import_employees(employees: list = Body(...), session: Session = Depend
     try:
         added_count = 0
         updated_count = 0
+        audit_username = "-"
         
         for emp_data in employees:
+            audit_username = emp_data.get("audit_username", audit_username)
             emp_code_str = str(emp_data.get("emp_code", "")).strip()
             if not emp_code_str or emp_code_str in ["nan", "", "-"]: 
                 continue # ข้ามถ้าไม่มีรหัสพนักงาน
@@ -244,6 +370,13 @@ def bulk_import_employees(employees: list = Body(...), session: Session = Depend
                 added_count += 1
                 
         session.commit()
+        write_audit_log(
+            audit_username,
+            "Upload Employee",
+            "Employee",
+            "bulk",
+            f"added={added_count}, updated={updated_count}"
+        )
         return {"message": f"✅ นำเข้าสำเร็จ: เพิ่มพนักงานใหม่ {added_count} คน | อัปเดตข้อมูลเดิม {updated_count} คน"}
         
     except Exception as e:
@@ -593,6 +726,13 @@ def upsert_service_month(data: dict, session: Session = Depends(get_db)):
     item.manual_service_rate = None if manual_rate in [None, ""] else float(manual_rate)
     item.note = str(data.get("note", "") or "")
     session.commit()
+    write_audit_log(
+        data.get("audit_username", "-"),
+        "Save Service Month",
+        "Service Charge",
+        f"{month}-{year}",
+        audit_details(data, ["room_service", "fb_service", "zipline_service", "other_service", "manual_service_rate"])
+    )
     session.refresh(item)
     return serialize_service_month(item)
 
@@ -783,6 +923,21 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         session.add(service_employee)
 
     session.commit()
+    write_audit_log(
+        data.get("audit_username", "-"),
+        "Save Service Calculation",
+        "Service Charge",
+        service_month_id,
+        f"employees={len(rows)}, actual_employee_paid={summary['actual_employee_paid']}"
+    )
+    if rows:
+        write_audit_log(
+            data.get("audit_username", "-"),
+            "Update Service Employee",
+            "Service Charge",
+            service_month_id,
+            f"employees={len(rows)}"
+        )
     return {"message": "บันทึก Service Calculation สำเร็จ", "summary": summary}
 
 @app.get("/api/service/employees/{service_month_id}")
@@ -924,9 +1079,10 @@ def get_payroll_by_cycle(cycle_name: str, session: Session = Depends(get_db)):
     return {"cycle_name": cycle_name, "payment_date": payment_date, "transactions": res_list}
 
 @app.delete("/payroll/{cycle_name}")
-def delete_payroll_cycle(cycle_name: str, session: Session = Depends(get_db)):
+def delete_payroll_cycle(cycle_name: str, username: str | None = None, session: Session = Depends(get_db)):
     session.query(db.PayrollTransaction).filter(db.PayrollTransaction.cycle_name == cycle_name).delete()
     session.commit()
+    write_audit_log(username or "-", "Delete Payroll Cycle", "Payroll", cycle_name, "")
     return {"message": "ลบข้อมูลรอบนี้เรียบร้อยแล้ว"}
 
 @app.post("/payroll/calculate")
@@ -1006,7 +1162,11 @@ def calculate_payroll(data: dict, session: Session = Depends(get_db)):
         transactions_to_add.append(new_tx)
         
     session.bulk_save_objects(transactions_to_add)
+    username = data.get("audit_username", "-")
     session.commit()
+    if time_data:
+        write_audit_log(username, "Upload Payroll", "Payroll", cycle_name, f"rows={len(time_data)}")
+    write_audit_log(username, "Calculate Payroll", "Payroll", cycle_name, f"employees={len(transactions_to_add)}")
     return {"message": f"คำนวณเงินเดือนรอบ {cycle_name} สำเร็จ! ({len(transactions_to_add)} คน)"}
 
 @app.get("/dashboard/trend")

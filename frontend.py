@@ -29,7 +29,25 @@ def api_get_json(path):
 def clear_api_cache():
     api_get_json.clear()
 
+def current_username():
+    return st.session_state.get("emp_name") or st.session_state.get("role") or "-"
+
+def audit_event(action, module, reference_id="", details="", username=None):
+    payload = {
+        "username": str(username or current_username()),
+        "action": str(action),
+        "module": str(module),
+        "reference_id": str(reference_id or ""),
+        "details": str(details or "")
+    }
+    try:
+        requests.post(f"{API_URL}/audit-logs/", json=payload, timeout=2)
+        api_get_json.clear()
+    except:
+        pass
+
 def logout_user():
+    audit_event("Logout", "Authentication")
     for key in ["authenticated", "role", "emp_code", "emp_name"]:
         st.session_state.pop(key, None)
 
@@ -787,7 +805,8 @@ def render_service_setup():
                     "fb_service": fb_service,
                     "zipline_service": zipline_service,
                     "other_service": other_service,
-                    "note": note
+                    "note": note,
+                    "audit_username": current_username()
                 }
                 try:
                     res = requests.post(f"{API_URL}{service_api_path('/months')}", json=payload, timeout=REQUEST_TIMEOUT)
@@ -929,7 +948,7 @@ def render_service_setup():
                     st.warning("⚠️ Actual Employee Paid exceeds Employee Pool. Please reduce manual rate or deductions before saving.")
 
                 if st.button("💾 Save Service Calculation", type="primary", use_container_width=True, disabled=actual_paid > employee_pool):
-                    payload = {"manual_service_rate": manual_rate_payload, "employees": recalculated_rows}
+                    payload = {"manual_service_rate": manual_rate_payload, "employees": recalculated_rows, "audit_username": current_username()}
                     try:
                         save_path = service_api_path(f"/calculate/{selected_month['id']}/save")
                         res = requests.post(f"{API_URL}{save_path}", json=payload, timeout=REQUEST_TIMEOUT)
@@ -973,6 +992,64 @@ def render_service_setup():
                 render_cash_preparation_report(reports, selected_report_month)
             except Exception as e:
                 st.info(f"ยังไม่มีข้อมูล Service Calculation สำหรับเดือนนี้: {e}")
+
+def render_audit_logs_page():
+    st.title("System > Audit Logs")
+    st.caption("Track important SmartHR user actions")
+
+    col1, col2, col3, col4 = st.columns(4)
+    today = datetime.date.today()
+    with col1:
+        start_date = st.date_input("Start Date", value=today - datetime.timedelta(days=30), key="audit_start_date")
+    with col2:
+        end_date = st.date_input("End Date", value=today, key="audit_end_date")
+    with col3:
+        username_filter = st.text_input("Username", key="audit_username_filter")
+    with col4:
+        module_filter = st.selectbox("Module", ["All", "Authentication", "Employee", "Payroll", "Service Charge"], key="audit_module_filter")
+
+    if st.button("Refresh Audit Logs", use_container_width=True):
+        api_get_json.clear()
+
+    try:
+        params = {
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "module": module_filter,
+            "limit": 1000
+        }
+        if username_filter.strip():
+            params["username"] = username_filter.strip()
+        res = requests.get(f"{API_URL}/audit-logs/", params=params, timeout=REQUEST_TIMEOUT)
+        res.raise_for_status()
+        logs = res.json()
+        if not logs:
+            st.info("No audit logs found for the selected filters.")
+            return
+
+        df_audit = pd.DataFrame(logs)
+        df_audit = df_audit.rename(columns={
+            "timestamp": "Timestamp",
+            "username": "User",
+            "module": "Module",
+            "action": "Action",
+            "reference_id": "Reference",
+            "details": "Details"
+        })
+        display_columns = ["Timestamp", "User", "Module", "Action", "Reference", "Details"]
+        for col in display_columns:
+            if col not in df_audit.columns:
+                df_audit[col] = ""
+        st.dataframe(df_audit[display_columns], use_container_width=True)
+        st.download_button(
+            "Export CSV",
+            data=df_audit[display_columns].to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"Audit_Logs_{datetime.date.today()}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    except Exception as e:
+        st.error(f"ไม่สามารถโหลด Audit Logs ได้: {e}")
 
 def apply_custom_css():
     st.markdown("""
@@ -1417,7 +1494,9 @@ if not st.session_state["authenticated"]:
                 username_clean = username.strip()
                 password_clean = password.strip()
                 if username_clean.lower() == "admin" and password_clean == "13579":
-                    st.session_state["authenticated"] = True; st.session_state["role"] = "admin"; st.rerun()
+                    st.session_state["authenticated"] = True; st.session_state["role"] = "admin"
+                    audit_event("Login", "Authentication", username="admin")
+                    st.rerun()
                 else:
                     try:
                         emps = api_get_json("/employees/")
@@ -1425,6 +1504,7 @@ if not st.session_state["authenticated"]:
                         if valid_emp:
                             st.session_state["authenticated"] = True; st.session_state["role"] = "employee"
                             st.session_state["emp_code"] = valid_emp["emp_code"]; st.session_state["emp_name"] = f"{valid_emp['first_name']} {valid_emp['last_name']}"
+                            audit_event("Login", "Authentication", valid_emp["emp_code"], username=st.session_state["emp_name"])
                             st.rerun()
                         else: st.error("❌ ข้อมูลไม่ถูกต้อง")
                     except: st.error("❌ ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์")
@@ -1534,9 +1614,12 @@ elif st.session_state["role"] == "admin":
             logout_user()
             st.rerun()
 
-    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)"], key="admin_menu")
+    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "System > Audit Logs"], key="admin_menu")
     if admin_menu == "Service Charge (Beta)":
         render_service_setup()
+        st.stop()
+    if admin_menu == "System > Audit Logs":
+        render_audit_logs_page()
         st.stop()
 
     tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 0. ภาพรวมสถิติ", "👥 1. ฐานข้อมูลพนักงาน", "💰 2. ประมวลผลเงินเดือน", "📥 3. ออกเอกสารและรายงาน", "⏱️ 4. ประมวลผลเวลา (Check-in)", "📜 5. ประวัติการใช้งาน"])
@@ -1646,7 +1729,8 @@ elif st.session_state["role"] == "admin":
                             "account_no": account_no,
                             "is_sso": is_sso,
                             "service_type": service_type,
-                            "service_percent": service_percent
+                            "service_percent": service_percent,
+                            "audit_username": current_username()
                         }
                         res = requests.post(f"{API_URL}/employees/", json=payload, timeout=REQUEST_TIMEOUT)
                         if res.status_code == 200:
@@ -1671,7 +1755,10 @@ elif st.session_state["role"] == "admin":
                 
                 if st.button("💾 ยืนยันการนำเข้าข้อมูล", type="primary"):
                     try:
-                        res = requests.post(f"{API_URL}/employees/bulk", json=df_bulk.to_dict(orient="records"), timeout=REQUEST_TIMEOUT)
+                        bulk_rows = df_bulk.to_dict(orient="records")
+                        for row in bulk_rows:
+                            row["audit_username"] = current_username()
+                        res = requests.post(f"{API_URL}/employees/bulk", json=bulk_rows, timeout=REQUEST_TIMEOUT)
                         if res.status_code == 200: 
                             clear_api_cache()
                             st.success(res.json()["message"])
@@ -1750,7 +1837,8 @@ elif st.session_state["role"] == "admin":
                                 "is_sso": edit_sso,
                                 "service_type": edit_service_type,
                                 "service_percent": edit_service_percent,
-                                "start_date": str(edit_start_date) # 🟢 ส่งข้อมูลวันเริ่มงานกลับไป
+                                "start_date": str(edit_start_date), # 🟢 ส่งข้อมูลวันเริ่มงานกลับไป
+                                "audit_username": current_username()
                             }
                             res_update = requests.put(f"{API_URL}/employees/{emp_data['emp_code']}", json=update_payload, timeout=REQUEST_TIMEOUT)
                             if res_update.status_code == 200:
@@ -1795,7 +1883,7 @@ elif st.session_state["role"] == "admin":
             time_data_list = df_time.fillna(0).to_dict(orient="records")
 
         if st.button("🚀 รันระบบประมวลผลทันที", type="primary", use_container_width=True):
-            payload = {"cycle_name": cycle_name, "payment_date": str(payment_date), "time_data": time_data_list}
+            payload = {"cycle_name": cycle_name, "payment_date": str(payment_date), "time_data": time_data_list, "audit_username": current_username()}
             try:
                 with st.spinner("กำลังประมวลผล..."):
                     res = requests.post(f"{API_URL}/payroll/calculate", json=payload, timeout=REQUEST_TIMEOUT)
@@ -1824,7 +1912,7 @@ elif st.session_state["role"] == "admin":
             with col_btn2: delete_clicked = st.button("🗑️ ลบข้อมูลรอบนี้ทิ้ง", use_container_width=True)
 
             if delete_clicked:
-                requests.delete(f"{API_URL}/payroll/{search_cycle}", timeout=REQUEST_TIMEOUT)
+                requests.delete(f"{API_URL}/payroll/{search_cycle}", params={"username": current_username()}, timeout=REQUEST_TIMEOUT)
                 clear_api_cache()
                 st.rerun()
 

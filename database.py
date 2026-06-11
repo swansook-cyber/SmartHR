@@ -75,6 +75,17 @@ class AccessLog(Base):
     action = Column(String)
     timestamp = Column(String, index=True)
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(String, index=True)
+    username = Column(String, index=True)
+    action = Column(String, index=True)
+    module = Column(String, index=True)
+    reference_id = Column(String, nullable=True)
+    details = Column(String, nullable=True)
+
 # 🧾 ตารางตั้งค่า Service Charge รายเดือน (Phase 1: โครงสร้างเท่านั้น)
 class ServiceMonth(Base):
     __tablename__ = "service_months"
