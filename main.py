@@ -1081,6 +1081,18 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
     ).all()
     employees = {str(emp.emp_code): emp for emp in session.query(db.Employee).all()}
     rows = [serialize_service_employee(row) for row in service_rows]
+    payroll_cycle_name = f"{service_month.month}-{service_month.year}"
+    payroll_transactions = session.query(db.PayrollTransaction).filter(
+        db.PayrollTransaction.cycle_name == payroll_cycle_name
+    ).all()
+    payroll_order = {
+        str(transaction.emp_code): index
+        for index, transaction in enumerate(payroll_transactions)
+    }
+    for row in rows:
+        emp_code = str(row.get("emp_code", "") or "")
+        if emp_code in payroll_order:
+            row["payroll_order"] = payroll_order[emp_code]
     distribution = {}
     for row in rows:
         amount = round_baht(row.get("net_service", 0))

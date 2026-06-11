@@ -21,18 +21,18 @@ SERVICE_API_PREFIX = "/api/service"
 st.set_page_config(page_title="Aonang Fiore HRMS", layout="wide", page_icon="🌴")
 
 DEPARTMENT_ORDER = [
-    "RM-ต้อนรับส่วนหน้า",
-    "RM-แม่บ้าน",
-    "FB-ห้องอาหาร",
-    "FB-ครัวผลิต",
-    "MY-เรือ MY Lalida",
-    "TU-Zipline",
     "AM-บริหารส่วนกลาง",
+    "HR-ทรัพยากรบุคคล",
     "AC-บัญชี",
     "SM-การตลาด",
+    "RM-ต้อนรับส่วนหน้า",
+    "RM-แม่บ้าน",
+    "FB-ครัวผลิต",
+    "FB-ห้องอาหาร",
     "EN-ช่างทั่วไป",
     "GN-สวน-ภูมิทัศน์",
-    "HR-ทรัพยากรบุคคล",
+    "TU-Zipline",
+    "MY-เรือ MY Lalida",
 ]
 DEPARTMENT_ORDER_INDEX = {dept: index for index, dept in enumerate(DEPARTMENT_ORDER)}
 
@@ -46,6 +46,14 @@ def ordered_department_names(grouped_departments):
             first_seen.get(dept, len(first_seen)),
         ),
     )
+
+
+def employee_report_order_key(row, fallback_index=0):
+    payroll_order = row.get("payroll_order")
+    if payroll_order not in [None, ""]:
+        return (0, int(payroll_order))
+    emp_code = str(row.get("emp_code", "") or "")
+    return (1, emp_code, fallback_index)
 
 @st.cache_data(ttl=30, show_spinner=False)
 def api_get_json(path):
@@ -226,7 +234,11 @@ def service_detail_report_html(reports, selected_month):
     grand_totals = {field: 0 for field in total_fields}
     employee_no = 1
     for department in ordered_department_names(grouped):
-        dept_rows = grouped[department]
+        dept_fallback_order = {id(row): index for index, row in enumerate(grouped[department])}
+        dept_rows = sorted(
+            grouped[department],
+            key=lambda row: employee_report_order_key(row, dept_fallback_order.get(id(row), 0)),
+        )
         body_rows.append(f"<tr class='dept-row'><td colspan='{len(columns)}'>แผนก: {html.escape(str(department))}</td></tr>")
         dept_totals = {field: 0 for field in total_fields}
         for row in dept_rows:
