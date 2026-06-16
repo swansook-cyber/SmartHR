@@ -184,7 +184,7 @@ def recalculate_service_rows(rows, service_rate):
         net_service = max(0, round_baht(gross_service - sick_deduction - leave_day_deduction - leave_hour_deduction - late_deduction - evaluation_deduction - deposit_deduction))
         new_row = dict(row)
         new_row.update({
-            "service_rate": round_baht(service_rate),
+            "service_rate": float(service_rate or 0),
             "gross_service": gross_service,
             "sick_days": sick_days,
             "leave_days": leave_days,
@@ -487,17 +487,17 @@ def service_summary_report_html(summary_report):
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     columns = [
         ("month", "Month"),
-        ("room_service", "Room Service"),
-        ("fb_service", "F&B Service"),
-        ("zipline_service", "Zipline Service"),
-        ("other_service", "Other Service"),
-        ("total_service", "Total Service"),
+        ("room_revenue", "Room Revenue"),
+        ("fb_revenue", "F&B Revenue"),
+        ("zipline_revenue", "Zipline Revenue"),
+        ("other_revenue", "Other Revenue"),
+        ("total_revenue", "Total Revenue"),
+        ("service_charge_10", "Service Charge 10%"),
         ("employee_pool", "Employee Pool (60%)"),
         ("actual_employee_paid", "Actual Employee Paid"),
         ("welfare_fund", "Welfare Fund (20%)"),
         ("employee_deposit_total", "Employee Deposit Total"),
-        ("resort_fund", "Resort Fund (20%)"),
-        ("balance_returned_to_resort", "Balance Returned To Resort")
+        ("resort_fund", "Resort Fund (20%)")
     ]
     numeric_columns = {key for key, _label in columns if key != "month"}
     header_cells = "".join(f"<th>{html.escape(label)}</th>" for _key, label in columns)
@@ -1034,7 +1034,7 @@ def render_service_setup():
                         "payroll_year": st.column_config.NumberColumn("Payroll Year", format="%d"),
                         "prior_deposit_total": st.column_config.NumberColumn("Prior Deposit Total", format="%d"),
                         "service_weight": st.column_config.NumberColumn("Service Weight", format="%.2f"),
-                        "service_rate": st.column_config.NumberColumn("Service Rate", format="%d"),
+                        "service_rate": st.column_config.NumberColumn("Service Rate", format="%.2f"),
                         "gross_service": st.column_config.NumberColumn("Gross Service", format="%d"),
                         "sick_days": st.column_config.NumberColumn("Sick Days", min_value=0.0, step=0.5),
                         "leave_days": st.column_config.NumberColumn("Leave Days", min_value=0.0, step=0.5),
@@ -1091,9 +1091,9 @@ def render_service_setup():
                 c1, c2, c3 = st.columns(3)
                 with c1: st.metric("Employee Pool", f"{employee_pool:,.0f}")
                 with c2: st.metric("Total Weight", f"{summary.get('total_weight', 0):,.2f}")
-                with c3: st.metric("Calculated Service Rate", f"{round_baht(summary.get('calculated_service_rate', 0)):,.0f}")
+                with c3: st.metric("Calculated Service Rate", f"{float(summary.get('calculated_service_rate', 0) or 0):,.2f}")
                 c4, c5, c6 = st.columns(3)
-                with c4: st.metric("Manual Service Rate", f"{round_baht(manual_rate_payload or 0):,.0f}")
+                with c4: st.metric("Manual Service Rate", f"{float(manual_rate_payload or 0):,.2f}")
                 with c5: st.metric("Actual Employee Paid", f"{actual_paid:,.0f}")
                 with c6: st.metric("Balance Returned To Resort", f"{balance_returned:,.0f}")
 

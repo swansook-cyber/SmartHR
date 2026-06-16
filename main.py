@@ -786,15 +786,15 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
 def service_summary(service_month, rows):
     employee_pool = serialize_service_month(service_month)["employee_pool"]
     total_weight = sum(float(row.get("service_weight", 0) or 0) for row in rows)
-    calculated_rate = round_baht(employee_pool / total_weight) if total_weight > 0 else 0
+    calculated_rate = float(employee_pool / total_weight) if total_weight > 0 else 0
     manual_rate = service_month.manual_service_rate
-    service_rate = round_baht(manual_rate) if manual_rate not in [None, ""] else calculated_rate
+    service_rate = float(manual_rate) if manual_rate not in [None, ""] else calculated_rate
     actual_paid = sum(service_row_total_after_deduction(row) for row in rows)
     return {
         "employee_pool": round_baht(employee_pool),
         "total_weight": total_weight,
         "calculated_service_rate": calculated_rate,
-        "manual_service_rate": round_baht(manual_rate) if manual_rate not in [None, ""] else None,
+        "manual_service_rate": float(manual_rate) if manual_rate not in [None, ""] else None,
         "service_rate": service_rate,
         "actual_employee_paid": actual_paid,
         "balance_returned_to_resort": round_baht(employee_pool - actual_paid),
@@ -914,22 +914,29 @@ def serialize_service_summary_report(service_month, service_rows):
     actual_paid = sum(round_baht(row.net_service or 0) + round_baht(row.deposit_deduction or 0) for row in service_rows)
     deposit_total = sum(round_baht(row.deposit_deduction or 0) for row in service_rows)
     employee_pool = round_baht(month_data["employee_pool"])
+    balance_returned = round_baht(employee_pool - actual_paid)
+    room_service = round_baht(month_data["room_service"])
+    fb_service = round_baht(month_data["fb_service"])
+    zipline_service = round_baht(month_data["zipline_service"])
+    other_service = round_baht(month_data["other_service"])
+    total_service = round_baht(month_data["total_service"])
     return {
         "service_month_id": service_month.id,
         "month": service_month.month,
         "year": service_month.year,
         "month_no": month_number(service_month.month),
-        "room_service": round_baht(month_data["room_service"]),
-        "fb_service": round_baht(month_data["fb_service"]),
-        "zipline_service": round_baht(month_data["zipline_service"]),
-        "other_service": round_baht(month_data["other_service"]),
-        "total_service": round_baht(month_data["total_service"]),
+        "room_revenue": round_baht(room_service / 0.10),
+        "fb_revenue": round_baht(fb_service / 0.10),
+        "zipline_revenue": round_baht(zipline_service / 0.10),
+        "other_revenue": round_baht(other_service / 0.10),
+        "total_revenue": round_baht(total_service / 0.10),
+        "service_charge_10": total_service,
         "employee_pool": employee_pool,
         "actual_employee_paid": actual_paid,
-        "welfare_fund": round_baht(month_data["welfare_fund"]),
+        "welfare_fund": round_baht(month_data["welfare_fund"] + balance_returned),
         "employee_deposit_total": deposit_total,
         "resort_fund": round_baht(month_data["resort_fund"]),
-        "balance_returned_to_resort": round_baht(employee_pool - actual_paid)
+        "balance_returned_to_resort": balance_returned
     }
 
 @app.get("/api/service/months")
@@ -1012,8 +1019,8 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
         base_rows.append((emp, existing, service_weight))
 
     month_data = serialize_service_month(service_month)
-    calculated_rate = round_baht(month_data["employee_pool"] / total_weight) if total_weight > 0 else 0
-    selected_rate = round_baht(manual_service_rate) if manual_service_rate is not None else calculated_rate
+    calculated_rate = float(month_data["employee_pool"] / total_weight) if total_weight > 0 else 0
+    selected_rate = float(manual_service_rate) if manual_service_rate is not None else calculated_rate
 
     rows = []
     for emp, existing, service_weight in base_rows:
@@ -1106,7 +1113,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         emp_code = str(normalized.get("emp_code", "") or "")
         employee = employees.get(emp_code)
         service_weight = calculate_service_weight(employee, service_month) if employee else float(normalized.get("service_weight", 0.0) or 0.0)
-        service_rate = round_baht(normalized.get("service_rate", 0.0))
+        service_rate = float(normalized.get("service_rate", 0.0) or 0.0)
         gross_service = round_baht(service_rate * service_weight)
         sick_days = float(normalized.get("sick_days", 0.0) or 0.0)
         leave_days = float(normalized.get("leave_days", 0.0) or 0.0)
@@ -1196,7 +1203,7 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             service_type=str(row.get("service_type", "AUTO")),
             service_percent=float(row.get("service_percent", 100.0) or 0.0),
             service_weight=float(row.get("service_weight", 0.0) or 0.0),
-            service_rate=round_baht(row.get("service_rate", 0.0)),
+            service_rate=float(row.get("service_rate", 0.0) or 0.0),
             gross_service=round_baht(row.get("gross_service", 0.0)),
             sick_days=float(row.get("sick_days", 0.0) or 0.0),
             sick_deduction=round_baht(row.get("sick_deduction", 0.0)),
@@ -1328,14 +1335,24 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         for amount, count in sorted(distribution.items(), key=lambda item: item[0], reverse=True)
     ]
 
-    remaining = sum(round_baht(row.get("net_service", 0)) for row in rows)
-    cash_rows = []
-    for denom in [1000, 500, 100, 50, 20]:
-        qty = remaining // denom
-        amount = qty * denom
-        cash_rows.append({"Denomination": denom, "Quantity": qty, "Amount": amount})
-        remaining -= amount
-    cash_rows.append({"Denomination": "coins/remainder", "Quantity": remaining, "Amount": remaining})
+    denominations = [1000, 500, 100, 50, 20]
+    cash_totals = {
+        denom: {"Denomination": denom, "Quantity": 0, "Amount": 0}
+        for denom in denominations
+    }
+    cash_totals["coins/remainder"] = {"Denomination": "coins/remainder", "Quantity": 0, "Amount": 0}
+    for row in rows:
+        employee_remaining = round_baht(row.get("net_service", 0))
+        for denom in denominations:
+            qty = employee_remaining // denom
+            amount = qty * denom
+            cash_totals[denom]["Quantity"] += qty
+            cash_totals[denom]["Amount"] += amount
+            employee_remaining -= amount
+        if employee_remaining:
+            cash_totals["coins/remainder"]["Quantity"] += employee_remaining
+            cash_totals["coins/remainder"]["Amount"] += employee_remaining
+    cash_rows = [cash_totals[denom] for denom in denominations + ["coins/remainder"]]
 
     summary = service_summary(service_month, rows)
     return {
@@ -1351,7 +1368,7 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         "distribution_summary": distribution_summary,
         "total_employees": len(rows),
         "cash_preparation": cash_rows,
-        "cash_grand_total": sum(row["Amount"] for row in cash_rows)
+        "cash_grand_total": sum(round_baht(row.get("net_service", 0)) for row in rows)
     }
 
 @app.get("/api/service/reports/summary/{year}")
@@ -1370,8 +1387,8 @@ def get_service_summary_report(year: int, session: Session = Depends(get_db)):
         summary_rows.append(serialize_service_summary_report(service_month, service_rows))
 
     total_fields = [
-        "room_service", "fb_service", "zipline_service", "other_service",
-        "total_service", "employee_pool", "actual_employee_paid",
+        "room_revenue", "fb_revenue", "zipline_revenue", "other_revenue",
+        "total_revenue", "service_charge_10", "employee_pool", "actual_employee_paid",
         "welfare_fund", "employee_deposit_total", "resort_fund",
         "balance_returned_to_resort"
     ]
