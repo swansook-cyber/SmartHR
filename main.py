@@ -967,6 +967,7 @@ def build_service_jv_report(service_month, service_rows, employees):
         for row in service_rows
     ]
     net_service_total = sum(round_baht(row.net_service or 0) for row in service_rows)
+    deposit_deduction_total = sum(round_baht(row.deposit_deduction or 0) for row in service_rows)
     deposit_refund_total = sum(round_baht(row.get("deposit_refund", 0)) for row in detail_rows)
 
     jv_rows = [
@@ -989,6 +990,14 @@ def build_service_jv_report(service_month, service_rows, employees):
             "credit": 0,
         },
     ]
+
+    if deposit_deduction_total > 0:
+        jv_rows.append({
+            "acc_no": "2004102",
+            "name": "เงินประกันพนักงาน",
+            "debit": 0,
+            "credit": deposit_deduction_total,
+        })
 
     department_totals = {}
     for row in detail_rows:
