@@ -872,6 +872,177 @@ def render_cash_preparation_report(reports, selected_month):
     report_html = cash_preparation_report_html(reports, selected_month)
     components.html(report_html, height=820, scrolling=True)
 
+def monthly_jv_report_html(reports, selected_month):
+    jv_report = reports.get("monthly_jv", {})
+    rows = jv_report.get("rows", [])
+    total_debit = round_baht(jv_report.get("total_debit", 0))
+    total_credit = round_baht(jv_report.get("total_credit", 0))
+    net_total = round_baht(jv_report.get("net", total_debit - total_credit))
+    is_balanced = bool(jv_report.get("is_balanced", total_debit == total_credit))
+    title = f"Monthly JV Report - Service Charge {selected_month['month']} {selected_month['year']}"
+    printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    body_rows = []
+    for row in rows:
+        body_rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('acc_no', '') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('name', '') or ''))}</td>"
+            f"<td class='num'>{format_baht(row.get('debit', 0))}</td>"
+            f"<td class='num'>{format_baht(row.get('credit', 0))}</td>"
+            f"<td class='num'>{format_baht(row.get('net', 0))}</td>"
+            "</tr>"
+        )
+
+    balance_class = "balanced" if is_balanced else "unbalanced"
+    balance_text = "Debit and Credit are balanced." if is_balanced else "Warning: Total Debit does not equal Total Credit."
+    return f"""<style>
+        .service-print-actions {{
+            margin: 0.5rem 0 1rem 0;
+        }}
+        .service-report-print-btn {{
+            border: 1px solid #2f6f5e;
+            background: #2f6f5e;
+            color: white;
+            padding: 0.45rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }}
+        .service-report {{
+            background: white;
+            color: #111;
+            padding: 18px;
+            border: 1px solid #d8d8d8;
+            overflow-x: auto;
+            font-family: Arial, sans-serif;
+        }}
+        .service-report h2 {{
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: 0;
+        }}
+        .service-report h3 {{
+            margin: 2px 0 4px 0;
+            font-size: 17px;
+            font-weight: 500;
+        }}
+        .service-report .printed {{
+            font-size: 12px;
+            margin-bottom: 10px;
+        }}
+        .jv-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+        .jv-table th,
+        .jv-table td {{
+            border-bottom: 1px solid #e2e2e2;
+            padding: 7px 6px;
+            vertical-align: top;
+        }}
+        .jv-table th {{
+            border-top: 1px solid #111;
+            border-bottom: 1px solid #111;
+            text-align: left;
+            font-weight: 700;
+        }}
+        .jv-table .num {{
+            text-align: right;
+            white-space: nowrap;
+        }}
+        .grand-total td {{
+            font-weight: 700;
+            border-top: 2px solid #111;
+            border-bottom: 3px double #111;
+        }}
+        .jv-balance {{
+            margin-top: 14px;
+            padding: 9px 10px;
+            border: 1px solid #777;
+            font-size: 13px;
+        }}
+        .jv-balance.unbalanced {{
+            border-color: #b91c1c;
+            color: #7f1d1d;
+            background: #fef2f2;
+            font-weight: 700;
+        }}
+        .jv-balance.balanced {{
+            border-color: #2f6f5e;
+            color: #164e3f;
+            background: #f0f8f5;
+        }}
+        .signature-row {{
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-top: 70px;
+            text-align: center;
+            font-size: 12px;
+        }}
+        @media print {{
+            body * {{
+                visibility: hidden;
+            }}
+            .service-report, .service-report * {{
+                visibility: visible;
+            }}
+            .service-report {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                border: 0;
+                padding: 0;
+                overflow: visible;
+            }}
+            .service-print-actions {{
+                display: none;
+            }}
+            @page {{
+                size: A4 portrait;
+                margin: 12mm;
+            }}
+        }}
+    </style>
+    <div class="service-print-actions">
+        <button class="service-report-print-btn" onclick="window.print()">Print Monthly JV Report</button>
+    </div>
+    <div class="service-report">
+        <h2>AONANG FIORE RESORT</h2>
+        <h3>{html.escape(title)}</h3>
+        <div class="printed">Printed Date: {html.escape(printed_at)}</div>
+        <table class="jv-table">
+            <thead>
+                <tr>
+                    <th>ACC NO.</th>
+                    <th>NAME</th>
+                    <th>DEBIT</th>
+                    <th>CREDIT</th>
+                    <th>NET</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(body_rows)}
+                <tr class="grand-total">
+                    <td></td>
+                    <td>Total</td>
+                    <td class="num">{format_baht(total_debit)}</td>
+                    <td class="num">{format_baht(total_credit)}</td>
+                    <td class="num">{format_baht(net_total)}</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="jv-balance {balance_class}">{html.escape(balance_text)}</div>
+        {service_report_signature_html()}
+    </div>"""
+
+def render_monthly_jv_report(reports, selected_month):
+    report_html = monthly_jv_report_html(reports, selected_month)
+    components.html(report_html, height=760, scrolling=True)
+
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
     st.caption("Service setup, calculation, and reports")
@@ -1151,6 +1322,16 @@ def render_service_setup():
 
                 st.markdown("### Cash Preparation Report")
                 render_cash_preparation_report(reports, selected_report_month)
+
+                st.markdown("### Monthly JV Report")
+                monthly_jv = reports.get("monthly_jv", {})
+                if monthly_jv and not monthly_jv.get("is_balanced", False):
+                    st.warning(
+                        "Monthly JV Report warning: Total Debit does not equal Total Credit "
+                        f"(Debit {format_baht(monthly_jv.get('total_debit', 0))}, "
+                        f"Credit {format_baht(monthly_jv.get('total_credit', 0))})."
+                    )
+                render_monthly_jv_report(reports, selected_report_month)
             except Exception as e:
                 st.info(f"ยังไม่มีข้อมูล Service Calculation สำหรับเดือนนี้: {e}")
 

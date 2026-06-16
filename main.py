@@ -939,6 +939,99 @@ def serialize_service_summary_report(service_month, service_rows):
         "balance_returned_to_resort": balance_returned
     }
 
+SERVICE_JV_DEPARTMENT_ACCOUNTS = {
+    "RM": ("4051201", "RM-เงินค่าเซอร์วิสพนักงาน"),
+    "FB": ("4151201", "FB-เงินค่าเซอร์วิสพนักงาน"),
+    "MY": ("4251201", "MY-เงินค่าเซอร์วิสพนักงาน"),
+    "TU": ("4351201", "TU-เงินค่าเซอร์วิสพนักงาน"),
+    "AM": ("6051201", "AM-เงินค่าเซอร์วิสพนักงาน"),
+    "AC": ("6151201", "AC-เงินค่าเซอร์วิสพนักงาน"),
+    "SM": ("6251201", "SM-เงินค่าเซอร์วิสพนักงาน"),
+    "EN": ("6351201", "EN-เงินค่าเซอร์วิสพนักงาน"),
+    "GN": ("6451201", "GN-เงินค่าเซอร์วิสพนักงาน"),
+    "HR": ("7051201", "HR-เงินค่าเซอร์วิสพนักงาน"),
+}
+
+SERVICE_JV_DEPARTMENT_ORDER = ["RM", "FB", "MY", "TU", "AM", "AC", "SM", "EN", "GN", "HR"]
+
+def service_department_jv_group(department):
+    code = str(department or "").split("-", 1)[0].strip().upper()
+    return code if code in SERVICE_JV_DEPARTMENT_ACCOUNTS else ""
+
+def build_service_jv_report(service_month, service_rows, employees):
+    month_data = serialize_service_month(service_month)
+    welfare_resort_total = round_baht(month_data["welfare_fund"]) + round_baht(month_data["resort_fund"])
+
+    detail_rows = [
+        serialize_service_detail_report(row, employees.get(str(row.emp_code)))
+        for row in service_rows
+    ]
+    net_service_total = sum(round_baht(row.net_service or 0) for row in service_rows)
+    deposit_refund_total = sum(round_baht(row.get("deposit_refund", 0)) for row in detail_rows)
+
+    jv_rows = [
+        {
+            "acc_no": "2003103",
+            "name": "Service Charge ค้างจ่าย",
+            "debit": 0,
+            "credit": net_service_total,
+        },
+        {
+            "acc_no": "2005002",
+            "name": "สำรองเงินจาก Service",
+            "debit": 0,
+            "credit": welfare_resort_total,
+        },
+        {
+            "acc_no": "3012010",
+            "name": "กำไร(ขาดทุน)สะสม-จัดสรรเงินกองทุน",
+            "debit": welfare_resort_total,
+            "credit": 0,
+        },
+    ]
+
+    department_totals = {}
+    for row in detail_rows:
+        department_code = service_department_jv_group(row.get("department"))
+        if not department_code:
+            continue
+        department_totals[department_code] = department_totals.get(department_code, 0) + round_baht(row.get("total_after_deduction", 0))
+
+    for department_code in SERVICE_JV_DEPARTMENT_ORDER:
+        amount = department_totals.get(department_code, 0)
+        if amount <= 0:
+            continue
+        acc_no, name = SERVICE_JV_DEPARTMENT_ACCOUNTS[department_code]
+        jv_rows.append({
+            "acc_no": acc_no,
+            "name": name,
+            "debit": amount,
+            "credit": 0,
+        })
+
+    if deposit_refund_total > 0:
+        jv_rows.append({
+            "acc_no": "2004102",
+            "name": "เงินประกันพนักงาน",
+            "debit": deposit_refund_total,
+            "credit": 0,
+        })
+
+    for row in jv_rows:
+        row["debit"] = round_baht(row.get("debit", 0))
+        row["credit"] = round_baht(row.get("credit", 0))
+        row["net"] = round_baht(row["debit"] - row["credit"])
+
+    total_debit = sum(row["debit"] for row in jv_rows)
+    total_credit = sum(row["credit"] for row in jv_rows)
+    return {
+        "rows": jv_rows,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "net": round_baht(total_debit - total_credit),
+        "is_balanced": total_debit == total_credit,
+    }
+
 @app.get("/api/service/months")
 @app.get("/service/months")
 def get_service_months(session: Session = Depends(get_db)):
@@ -1368,7 +1461,8 @@ def get_service_reports(service_month_id: int, session: Session = Depends(get_db
         "distribution_summary": distribution_summary,
         "total_employees": len(rows),
         "cash_preparation": cash_rows,
-        "cash_grand_total": sum(round_baht(row.get("net_service", 0)) for row in rows)
+        "cash_grand_total": sum(round_baht(row.get("net_service", 0)) for row in rows),
+        "monthly_jv": build_service_jv_report(service_month, service_rows, employees)
     }
 
 @app.get("/api/service/reports/summary/{year}")
