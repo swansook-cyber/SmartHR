@@ -1,4 +1,5 @@
 ﻿from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, inspect, text
 import database as db
@@ -6,12 +7,46 @@ from typing import List
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import json
+import math
 from pathlib import Path
 import sqlite3
 import shutil
 import re
 
-app = FastAPI()
+def safe_json_value(value, path="response"):
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            print(f"[safe-json] Non-finite float at {path}: {value}; response value converted to 0")
+            return 0
+        return value
+    if isinstance(value, Decimal):
+        if value.is_nan() or value.is_infinite():
+            print(f"[safe-json] Non-finite Decimal at {path}: {value}; response value converted to 0")
+            return 0
+        return float(value)
+    if isinstance(value, dict):
+        return {
+            str(key): safe_json_value(item, f"{path}.{key}")
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [
+            safe_json_value(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if hasattr(value, "item") and value.__class__.__module__.split(".", 1)[0] in {"numpy", "pandas"}:
+        try:
+            return safe_json_value(value.item(), path)
+        except Exception:
+            print(f"[safe-json] Unsupported scalar at {path}: {type(value).__name__}; response value converted to None")
+            return None
+    return value
+
+class SafeJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return super().render(safe_json_value(content))
+
+app = FastAPI(default_response_class=SafeJSONResponse)
 
 # 🟢 บรรทัดนี้ช่วยสร้างตารางให้ใหม่ทันทีถ้าฐานข้อมูลหาย
 db.Base.metadata.create_all(bind=db.engine)
