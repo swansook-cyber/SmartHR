@@ -42,6 +42,52 @@ def safe_json_value(value, path="response"):
             return None
     return value
 
+SERVICE_SAVE_OPTIONAL_NUMERIC_FIELDS = {
+    "sick_days",
+    "leave_days",
+    "leave_hours",
+    "late_hours",
+    "evaluation_percent",
+    "deposit_deduction",
+}
+
+def is_non_finite_number(value):
+    if isinstance(value, float):
+        return math.isnan(value) or math.isinf(value)
+    if isinstance(value, Decimal):
+        return value.is_nan() or value.is_infinite()
+    if hasattr(value, "item") and value.__class__.__module__.split(".", 1)[0] in {"numpy", "pandas"}:
+        try:
+            return is_non_finite_number(value.item())
+        except Exception:
+            return False
+    return False
+
+def sanitize_service_save_number(value, path):
+    if is_non_finite_number(value):
+        print(f"unsafe {path} = {value}; converted to 0 before service save")
+        return 0
+    return value
+
+def sanitize_service_save_request(data):
+    sanitized = dict(data or {})
+    sanitized["manual_service_rate"] = sanitize_service_save_number(
+        sanitized.get("manual_service_rate"),
+        "manual_service_rate",
+    )
+    sanitized_rows = []
+    for index, row in enumerate(sanitized.get("employees", []) or []):
+        normalized = dict(row or {})
+        for field in SERVICE_SAVE_OPTIONAL_NUMERIC_FIELDS:
+            if field in normalized:
+                normalized[field] = sanitize_service_save_number(
+                    normalized.get(field),
+                    f"service_rows[{index}].{field}",
+                )
+        sanitized_rows.append(normalized)
+    sanitized["employees"] = sanitized_rows
+    return sanitized
+
 class SafeJSONResponse(JSONResponse):
     def render(self, content) -> bytes:
         return super().render(safe_json_value(content))
@@ -1233,6 +1279,7 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
 @app.post("/api/service/calculate/{service_month_id}/save")
 @app.post("/service/calculate/{service_month_id}/save")
 def save_service_calculation(service_month_id: int, data: dict, session: Session = Depends(get_db)):
+    data = sanitize_service_save_request(data)
     service_month = session.query(db.ServiceMonth).filter(db.ServiceMonth.id == service_month_id).first()
     if not service_month:
         raise HTTPException(status_code=404, detail="ไม่พบข้อมูล Service Charge เดือนนี้")

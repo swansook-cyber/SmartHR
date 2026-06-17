@@ -12,6 +12,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 import os
 import re
+import math
 from decimal import Decimal, ROUND_HALF_UP
 
 API_URL = "http://localhost:8000"
@@ -124,6 +125,41 @@ def record_log(action):
 
 def round_baht(value):
     return int(Decimal(str(value or 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+def sanitize_service_payload_value(value, path="service_payload"):
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            print(f"unsafe {path} = {value}; converted to 0 before service save")
+            return 0
+        return value
+    if isinstance(value, Decimal):
+        if value.is_nan() or value.is_infinite():
+            print(f"unsafe {path} = {value}; converted to 0 before service save")
+            return 0
+        return float(value)
+    if isinstance(value, dict):
+        return {
+            key: sanitize_service_payload_value(item, f"{path}.{key}")
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            sanitize_service_payload_value(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if hasattr(value, "item") and value.__class__.__module__.split(".", 1)[0] in {"numpy", "pandas"}:
+        try:
+            return sanitize_service_payload_value(value.item(), path)
+        except Exception:
+            print(f"unsafe {path} = {type(value).__name__}; converted to 0 before service save")
+            return 0
+    try:
+        if value is not None and pd.isna(value):
+            print(f"unsafe {path} = {value}; converted to 0 before service save")
+            return 0
+    except Exception:
+        pass
+    return value
 
 def service_month_label(item):
     return f"{item['month']}-{item['year']}"
@@ -1226,7 +1262,8 @@ def render_service_setup():
 
                 original_by_code = {str(row.get("emp_code")): row for row in rows}
                 edited_rows = []
-                for edited_row in edited_df.to_dict(orient="records"):
+                for row_index, edited_row in enumerate(edited_df.to_dict(orient="records")):
+                    edited_row = sanitize_service_payload_value(edited_row, f"service_rows[{row_index}]")
                     source_row = dict(original_by_code.get(str(edited_row.get("emp_code")), {}))
                     source_row.update(edited_row)
                     edited_rows.append(source_row)
@@ -1273,6 +1310,7 @@ def render_service_setup():
 
                 if st.button("💾 Save Service Calculation", type="primary", use_container_width=True, disabled=actual_paid > employee_pool):
                     payload = {"manual_service_rate": manual_rate_payload, "employees": recalculated_rows, "audit_username": current_username()}
+                    payload = sanitize_service_payload_value(payload)
                     preview_totals = service_total_signature(employee_pool, actual_paid)
                     try:
                         save_path = service_api_path(f"/calculate/{selected_month['id']}/save")
