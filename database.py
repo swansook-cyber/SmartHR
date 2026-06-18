@@ -86,6 +86,20 @@ class AuditLog(Base):
     reference_id = Column(String, nullable=True)
     details = Column(String, nullable=True)
 
+class CompanySettings(Base):
+    __tablename__ = "company_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    logo_path = Column(String, nullable=True)
+    company_thai_name = Column(String, nullable=True)
+    company_english_name = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    tax_id = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    authorized_signer_name = Column(String, nullable=True)
+    authorized_signer_position_thai = Column(String, nullable=True)
+    authorized_signer_position_english = Column(String, nullable=True)
+
 # 🧾 ตารางตั้งค่า Service Charge รายเดือน (Phase 1: โครงสร้างเท่านั้น)
 class ServiceMonth(Base):
     __tablename__ = "service_months"

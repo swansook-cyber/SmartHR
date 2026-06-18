@@ -4,6 +4,8 @@ import requests
 import io
 import datetime
 import html
+import base64
+import mimetypes
 import streamlit.components.v1 as components
 from reportlab.lib.pagesizes import letter, A4, landscape
 from reportlab.pdfgen import canvas
@@ -1406,42 +1408,120 @@ def latest_payroll_salary(emp_code):
             continue
     return None, ""
 
-def hr_document_html(employee, document_type, issue_date, purpose, addressed_to, current_salary=None, salary_source="", end_date=None):
+DEFAULT_COMPANY_SETTINGS = {
+    "logo_path": "logo.png",
+    "company_thai_name": "โรงแรม อ่าวนางฟิโอเร่ รีสอร์ท แอนด์ สปา",
+    "company_english_name": "Aonang Fiore Resort & Spa",
+    "address": "764 หมู่ 2 ต.อ่าวนาง อ.เมือง จ.กระบี่ 81180",
+    "tax_id": "3-9203-00294-00-6",
+    "phone": "075-695522",
+    "authorized_signer_name": "",
+    "authorized_signer_position_thai": "ผู้จัดการฝ่ายบุคคล",
+    "authorized_signer_position_english": "Human Resources Manager",
+}
+
+def get_company_settings():
+    try:
+        settings = api_get_json("/company-settings/")
+    except Exception:
+        settings = {}
+    merged = dict(DEFAULT_COMPANY_SETTINGS)
+    merged.update({key: value for key, value in settings.items() if value not in [None, ""]})
+    return merged
+
+def logo_data_uri(logo_path):
+    path_value = str(logo_path or "logo.png").strip() or "logo.png"
+    candidates = [path_value]
+    if not os.path.isabs(path_value):
+        candidates.append(os.path.join(os.getcwd(), path_value))
+    for candidate in candidates:
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            mime_type = mimetypes.guess_type(candidate)[0] or "image/png"
+            with open(candidate, "rb") as logo_file:
+                encoded = base64.b64encode(logo_file.read()).decode("ascii")
+            return f"data:{mime_type};base64,{encoded}"
+    return ""
+
+def thai_baht_text(value):
+    value = round_baht(value)
+    numbers = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"]
+    positions = ["", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน"]
+
+    def read_group(group):
+        group = int(group)
+        if group == 0:
+            return ""
+        text = ""
+        digits = list(map(int, str(group)))
+        length = len(digits)
+        for index, digit in enumerate(digits):
+            pos = length - index - 1
+            if digit == 0:
+                continue
+            if pos == 1 and digit == 1:
+                text += "สิบ"
+            elif pos == 1 and digit == 2:
+                text += "ยี่สิบ"
+            elif pos == 0 and digit == 1 and length > 1:
+                text += "เอ็ด"
+            else:
+                text += numbers[digit] + positions[pos]
+        return text
+
+    if value == 0:
+        return "ศูนย์บาทถ้วน"
+    groups = []
+    while value > 0:
+        groups.insert(0, value % 1000000)
+        value //= 1000000
+    text = ""
+    for index, group in enumerate(groups):
+        group_text = read_group(group)
+        if group_text:
+            text += group_text
+            if index < len(groups) - 1:
+                text += "ล้าน"
+    return f"{text}บาทถ้วน"
+
+def dotted_value(value, min_width="180px"):
+    return f"<span class='dotline' style='min-width:{html.escape(min_width)}'>{html.escape(str(value or '-'))}</span>"
+
+def hr_document_html(employee, document_type, issue_date, purpose, addressed_to, company_settings, current_salary=None, salary_source="", end_date=None):
     issue_date_text = issue_date.strftime("%d/%m/%Y") if hasattr(issue_date, "strftime") else str(issue_date)
     end_date_text = end_date.strftime("%d/%m/%Y") if hasattr(end_date, "strftime") else str(end_date or "")
     name = employee_full_name(employee)
     status = employment_status_text(employee)
-    title = "SALARY CERTIFICATE" if document_type == "Salary Certificate" else "EMPLOYMENT CERTIFICATE"
+    is_salary = document_type == "Salary Certificate"
+    title = "หนังสือรับรองเงินเดือน" if is_salary else "หนังสือรับรองการทำงาน"
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     purpose_text = str(purpose or "-")
     addressed_text = str(addressed_to or "-")
+    company = dict(DEFAULT_COMPANY_SETTINGS)
+    company.update(company_settings or {})
+    logo_uri = logo_data_uri(company.get("logo_path"))
+    logo_html = f"<img src='{logo_uri}' alt='Company logo'>" if logo_uri else ""
+    salary_amount = round_baht(current_salary or employee.get("base_salary", 0))
+    period_end = end_date_text if not employee.get("is_active", True) and end_date_text else "จนถึงปัจจุบัน"
 
-    info_rows = [
-        ("Employee Name", name),
-        ("Employee Code", employee.get("emp_code", "")),
-        ("Position", employee.get("position", "") or "-"),
-        ("Department", employee.get("department", "") or "-"),
-        ("Start Date", employee.get("start_date", "") or "-"),
-        ("Employment Status", status),
-        ("Issue Date", issue_date_text),
-        ("Purpose / Addressed To", f"{purpose_text} / {addressed_text}"),
-    ]
-    if document_type == "Salary Certificate":
-        info_rows.insert(5, ("Current Salary", f"{format_baht(current_salary or employee.get('base_salary', 0))} Baht"))
-        if salary_source:
-            info_rows.insert(6, ("Salary Source", salary_source))
-    elif not employee.get("is_active", True):
-        info_rows.insert(5, ("End Date", end_date_text or "-"))
-
-    body_rows = "".join(
-        f"<tr><td>{html.escape(str(label))}</td><td>{html.escape(str(value))}</td></tr>"
-        for label, value in info_rows
-    )
-    certificate_intro = (
-        "This is to certify the employment and current salary information of the employee named below."
-        if document_type == "Salary Certificate"
-        else "This is to certify the employment information of the employee named below."
-    )
+    if is_salary:
+        document_body = f"""
+            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า {dotted_value(name, "260px")} รหัสพนักงาน {dotted_value(employee.get('emp_code', ''), "120px")}
+            ปฏิบัติงานในตำแหน่ง {dotted_value(employee.get('position', '') or '-', "220px")} แผนก {dotted_value(employee.get('department', '') or '-', "220px")}
+            เริ่มงานเมื่อวันที่ {dotted_value(employee.get('start_date', '') or '-', "160px")} ปัจจุบันมีสถานภาพการจ้างงาน {dotted_value(status, "140px")}</p>
+            <p>พนักงานดังกล่าวได้รับเงินเดือนปัจจุบันจำนวน {dotted_value(format_baht(salary_amount), "160px")} บาท
+            ({dotted_value(thai_baht_text(salary_amount), "320px")})</p>
+            <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text, "360px")} เรียน/ถึง {dotted_value(addressed_text, "260px")}</p>
+        """
+        source_line = f"<div class='source-line'>Salary Source: {html.escape(str(salary_source or '-'))}</div>"
+    else:
+        document_body = f"""
+            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า {dotted_value(name, "260px")} รหัสพนักงาน {dotted_value(employee.get('emp_code', ''), "120px")}
+            ปฏิบัติงานในตำแหน่ง {dotted_value(employee.get('position', '') or '-', "220px")} แผนก {dotted_value(employee.get('department', '') or '-', "220px")}</p>
+            <p>เริ่มงานเมื่อวันที่ {dotted_value(employee.get('start_date', '') or '-', "160px")} ถึงวันที่ {dotted_value(period_end, "180px")}
+            โดยมีสถานภาพการจ้างงาน {dotted_value(status, "160px")}</p>
+            <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text, "360px")} เรียน/ถึง {dotted_value(addressed_text, "260px")}</p>
+        """
+        source_line = ""
 
     return f"""<style>
         .hr-doc-actions {{
@@ -1461,60 +1541,76 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
             color: #111;
             max-width: 820px;
             margin: 0 auto;
-            padding: 28px;
+            padding: 34px 42px;
             border: 1px solid #d7d7d7;
-            font-family: Arial, sans-serif;
+            font-family: 'TH Sarabun New', 'Sarabun', Arial, sans-serif;
         }}
-        .hr-document h2 {{
+        .company-header {{
+            display: grid;
+            grid-template-columns: 96px 1fr;
+            gap: 16px;
+            align-items: center;
+            border-bottom: 2px solid #2f6f5e;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+        }}
+        .company-header img {{
+            max-width: 90px;
+            max-height: 90px;
+            object-fit: contain;
+        }}
+        .company-header h2 {{
             margin: 0;
             font-size: 24px;
             color: #2f6f5e;
             letter-spacing: 0;
         }}
+        .company-header .meta {{
+            margin-top: 3px;
+            font-size: 14px;
+            line-height: 1.45;
+        }}
         .hr-document h1 {{
-            margin: 6px 0 4px 0;
-            font-size: 20px;
+            text-align: center;
+            margin: 24px 0 22px 0;
+            font-size: 26px;
             letter-spacing: 0;
+            text-decoration: underline;
         }}
         .hr-document .printed {{
             font-size: 11px;
             color: #555;
             text-align: right;
         }}
-        .hr-doc-header {{
-            border-bottom: 3px solid #2f6f5e;
-            padding-bottom: 12px;
-            margin-bottom: 22px;
-        }}
         .hr-doc-body {{
-            font-size: 13px;
-            line-height: 1.7;
+            font-size: 18px;
+            line-height: 2.05;
+            text-align: left;
         }}
-        .hr-doc-table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 16px;
-            font-size: 13px;
+        .dotline {{
+            display: inline-block;
+            border-bottom: 1px dotted #333;
+            line-height: 1.1;
+            text-align: center;
+            padding: 0 6px;
         }}
-        .hr-doc-table td {{
-            border-bottom: 1px solid #e7e7e7;
-            padding: 8px 6px;
-            vertical-align: top;
-        }}
-        .hr-doc-table td:first-child {{
-            width: 34%;
-            font-weight: 700;
-            color: #2f6f5e;
+        .source-line {{
+            margin-top: 14px;
+            font-size: 12px;
+            color: #666;
+            text-align: right;
         }}
         .authorized-signature {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 28px;
-            margin-top: 78px;
-            font-size: 12px;
-        }}
-        .authorized-signature div {{
+            width: 280px;
+            margin: 76px 0 0 auto;
             text-align: center;
+            font-size: 16px;
+            line-height: 1.6;
+        }}
+        .issue-date {{
+            margin: 10px 0 18px 0;
+            text-align: right;
+            font-size: 18px;
         }}
         @media print {{
             body * {{
@@ -1545,19 +1641,30 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         <button class="hr-doc-print-btn" onclick="window.print()">Print</button>
     </div>
     <article class="hr-document">
-        <header class="hr-doc-header">
+        <header>
             <div class="printed">Printed Date: {html.escape(printed_at)}</div>
-            <h2>AONANG FIORE RESORT</h2>
+            <div class="company-header">
+                <div>{logo_html}</div>
+                <div>
+                    <h2>{html.escape(str(company.get('company_thai_name', '')))}</h2>
+                    <div class="meta">{html.escape(str(company.get('company_english_name', '')))}</div>
+                    <div class="meta">{html.escape(str(company.get('address', '')))}</div>
+                    <div class="meta">เลขประจำตัวผู้เสียภาษี {html.escape(str(company.get('tax_id', '')))} โทร. {html.escape(str(company.get('phone', '')))}</div>
+                </div>
+            </div>
             <h1>{html.escape(title)}</h1>
         </header>
         <section class="hr-doc-body">
-            <p>{html.escape(certificate_intro)}</p>
-            <table class="hr-doc-table"><tbody>{body_rows}</tbody></table>
-            <p style="margin-top: 22px;">This certificate is issued upon request for the purpose stated above.</p>
+            <div class="issue-date">วันที่ออกหนังสือ {dotted_value(issue_date_text, "160px")}</div>
+            {document_body}
+            <p>จึงออกหนังสือรับรองฉบับนี้ไว้เป็นหลักฐาน</p>
+            {source_line}
         </section>
         <footer class="authorized-signature">
-            <div>____________________________<br>Authorized Signature</div>
-            <div>____________________________<br>Date</div>
+            <div>ลงชื่อ ____________________________</div>
+            <div>({html.escape(str(company.get('authorized_signer_name') or ''))})</div>
+            <div>{html.escape(str(company.get('authorized_signer_position_thai') or ''))}</div>
+            <div>{html.escape(str(company.get('authorized_signer_position_english') or ''))}</div>
         </footer>
     </article>"""
 
@@ -1574,6 +1681,7 @@ def render_hr_documents_page():
     if not employees:
         st.info("ยังไม่มีข้อมูลพนักงาน")
         return
+    company_settings = get_company_settings()
 
     employee_options = {
         f"{emp.get('emp_code', '')} - {employee_full_name(emp)}": emp
@@ -1623,6 +1731,7 @@ def render_hr_documents_page():
             issue_date,
             purpose,
             addressed_to,
+            company_settings,
             current_salary=salary_value,
             salary_source=salary_source,
             end_date=end_date,
@@ -1630,6 +1739,55 @@ def render_hr_documents_page():
         height=920,
         scrolling=True,
     )
+
+def render_company_settings_page():
+    st.title("System > Company Settings")
+    st.caption("Company profile used in HR documents and certificates")
+
+    settings = get_company_settings()
+    logo_path = st.text_input("Company logo", value=settings.get("logo_path", "logo.png"))
+    logo_uri = logo_data_uri(logo_path)
+    if logo_uri:
+        st.image(logo_uri, width=120)
+    else:
+        st.info("Logo file not found. Default path can be `logo.png` in the project folder.")
+
+    with st.form("company_settings_form"):
+        company_thai_name = st.text_input("Company Thai name", value=settings.get("company_thai_name", ""))
+        company_english_name = st.text_input("Company English name", value=settings.get("company_english_name", ""))
+        address = st.text_area("Address", value=settings.get("address", ""), height=80)
+        col1, col2 = st.columns(2)
+        with col1:
+            tax_id = st.text_input("Tax ID", value=settings.get("tax_id", ""))
+            authorized_signer_name = st.text_input("Authorized signer name", value=settings.get("authorized_signer_name", ""))
+        with col2:
+            phone = st.text_input("Phone", value=settings.get("phone", ""))
+            authorized_signer_position_thai = st.text_input("Authorized signer position Thai", value=settings.get("authorized_signer_position_thai", ""))
+        authorized_signer_position_english = st.text_input("Authorized signer position English", value=settings.get("authorized_signer_position_english", ""))
+
+        if st.form_submit_button("Save Company Settings", type="primary", use_container_width=True):
+            payload = {
+                "logo_path": logo_path,
+                "company_thai_name": company_thai_name,
+                "company_english_name": company_english_name,
+                "address": address,
+                "tax_id": tax_id,
+                "phone": phone,
+                "authorized_signer_name": authorized_signer_name,
+                "authorized_signer_position_thai": authorized_signer_position_thai,
+                "authorized_signer_position_english": authorized_signer_position_english,
+                "audit_username": current_username(),
+            }
+            try:
+                res = requests.post(f"{API_URL}/company-settings/", json=payload, timeout=REQUEST_TIMEOUT)
+                if res.status_code == 200:
+                    clear_api_cache()
+                    st.success("Company settings updated.")
+                    st.rerun()
+                else:
+                    st.error(f"เกิดข้อผิดพลาด: {res.text}")
+            except Exception as e:
+                st.error(f"ไม่สามารถบันทึก Company Settings ได้: {e}")
 
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
@@ -1949,7 +2107,7 @@ def render_audit_logs_page():
     with col3:
         username_filter = st.text_input("Username", key="audit_username_filter")
     with col4:
-        module_filter = st.selectbox("Module", ["All", "Authentication", "Employee", "Payroll", "Service Charge"], key="audit_module_filter")
+        module_filter = st.selectbox("Module", ["All", "Authentication", "Employee", "Payroll", "Service Charge", "HR Documents", "System"], key="audit_module_filter")
 
     if st.button("Refresh Audit Logs", use_container_width=True):
         api_get_json.clear()
@@ -2591,7 +2749,7 @@ elif st.session_state["role"] == "admin":
             logout_user()
             st.rerun()
 
-    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "HR Documents", "System > Audit Logs", "System > Backups"], key="admin_menu")
+    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "HR Documents", "System > Audit Logs", "System > Backups", "System > Company Settings"], key="admin_menu")
     if admin_menu == "Service Charge (Beta)":
         render_service_setup()
         st.stop()
@@ -2603,6 +2761,9 @@ elif st.session_state["role"] == "admin":
         st.stop()
     if admin_menu == "System > Backups":
         render_backups_page()
+        st.stop()
+    if admin_menu == "System > Company Settings":
+        render_company_settings_page()
         st.stop()
 
     tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 0. ภาพรวมสถิติ", "👥 1. ฐานข้อมูลพนักงาน", "💰 2. ประมวลผลเงินเดือน", "📥 3. ออกเอกสารและรายงาน", "⏱️ 4. ประมวลผลเวลา (Check-in)", "📜 5. ประวัติการใช้งาน"])

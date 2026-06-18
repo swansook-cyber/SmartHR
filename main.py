@@ -201,6 +201,47 @@ def audit_details(data, keys=None):
 BACKUP_DIR = Path("HRMS_Backup")
 DATABASE_FILE = Path("payroll.db")
 
+DEFAULT_COMPANY_SETTINGS = {
+    "logo_path": "logo.png",
+    "company_thai_name": "โรงแรม อ่าวนางฟิโอเร่ รีสอร์ท แอนด์ สปา",
+    "company_english_name": "Aonang Fiore Resort & Spa",
+    "address": "764 หมู่ 2 ต.อ่าวนาง อ.เมือง จ.กระบี่ 81180",
+    "tax_id": "3-9203-00294-00-6",
+    "phone": "075-695522",
+    "authorized_signer_name": "",
+    "authorized_signer_position_thai": "ผู้จัดการฝ่ายบุคคล",
+    "authorized_signer_position_english": "Human Resources Manager",
+}
+
+def company_settings_payload(settings=None):
+    payload = dict(DEFAULT_COMPANY_SETTINGS)
+    if settings:
+        payload.update({
+            "id": settings.id,
+            "logo_path": settings.logo_path,
+            "company_thai_name": settings.company_thai_name,
+            "company_english_name": settings.company_english_name,
+            "address": settings.address,
+            "tax_id": settings.tax_id,
+            "phone": settings.phone,
+            "authorized_signer_name": settings.authorized_signer_name,
+            "authorized_signer_position_thai": settings.authorized_signer_position_thai,
+            "authorized_signer_position_english": settings.authorized_signer_position_english,
+        })
+    for key, value in DEFAULT_COMPANY_SETTINGS.items():
+        if payload.get(key) in [None, ""]:
+            payload[key] = value
+    return payload
+
+def get_or_create_company_settings(session):
+    settings = session.query(db.CompanySettings).order_by(db.CompanySettings.id.asc()).first()
+    if not settings:
+        settings = db.CompanySettings(**DEFAULT_COMPANY_SETTINGS)
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    return settings
+
 def backup_file_info(path):
     try:
         stat = path.stat()
@@ -362,6 +403,27 @@ def create_backup(data: dict = Body(default={}), session: Session = Depends(get_
         return {"message": "Backup created successfully", "backup": backup_info}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/company-settings/")
+def get_company_settings(session: Session = Depends(get_db)):
+    return company_settings_payload(get_or_create_company_settings(session))
+
+@app.post("/company-settings/")
+def update_company_settings(data: dict, session: Session = Depends(get_db)):
+    settings = get_or_create_company_settings(session)
+    for field in DEFAULT_COMPANY_SETTINGS.keys():
+        if field in data:
+            setattr(settings, field, str(data.get(field, "") or ""))
+    session.commit()
+    session.refresh(settings)
+    write_audit_log(
+        data.get("audit_username", "-"),
+        "Update Company Settings",
+        "System",
+        "company_settings",
+        audit_details(data, list(DEFAULT_COMPANY_SETTINGS.keys()))
+    )
+    return company_settings_payload(settings)
 
 # ==========================================
 # 👥 ระบบจัดการพนักงาน (Employees)
