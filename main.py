@@ -838,6 +838,8 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
         "department": row.department or "",
         "service_eligibility_percent": round_baht(float(row.service_weight or 0) * 100),
         "eligible_service_month": eligible_service_month_index(employee, service_month) if employee else "",
+        "service_weight": row.service_weight or 0.0,
+        "service_rate": row.service_rate or 0.0,
         "gross_service": row.gross_service or 0.0,
         "sick_days": row.sick_days or 0.0,
         "sick_deduction": row.sick_deduction or 0.0,
@@ -850,7 +852,14 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
         "late_deduction": row.late_deduction or 0.0,
         "evaluation_percent": row.evaluation_percent or 0.0,
         "evaluation_deduction": row.evaluation_deduction or 0.0,
+        "total_after_deduction": round_baht(row.gross_service or 0.0)
+            - round_baht(row.sick_deduction or 0.0)
+            - round_baht(row.leave_day_deduction or 0.0)
+            - round_baht(row.leave_hour_deduction or 0.0)
+            - round_baht(row.late_deduction or 0.0)
+            - round_baht(row.evaluation_deduction or 0.0),
         "deposit_deduction": row.deposit_deduction or 0.0,
+        "deposit_refund": 0,
         "net_service": row.net_service or 0.0,
         "deduction_remarks": service_attendance_remarks({
             "sick_days": row.sick_days or 0.0,

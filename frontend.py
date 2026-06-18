@@ -1079,6 +1079,306 @@ def render_monthly_jv_report(reports, selected_month):
     report_html = monthly_jv_report_html(reports, selected_month)
     components.html(report_html, height=760, scrolling=True)
 
+def service_slip_v2_html(slips, title_suffix="", print_all=False):
+    if isinstance(slips, dict):
+        slips = [slips]
+    slips = slips or []
+    printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    button_label = "Print All Slips" if print_all else "Print Slip"
+
+    def money(value):
+        return format_baht(value)
+
+    def number(value):
+        try:
+            value = float(value or 0)
+            return f"{value:,.2f}".rstrip("0").rstrip(".")
+        except Exception:
+            return "0"
+
+    def service_month_text(slip):
+        return slip.get("service_month") or f"{slip.get('month', '')}-{slip.get('year', '')}".strip("-")
+
+    slip_blocks = []
+    for slip in slips:
+        employee_name = " ".join([
+            str(slip.get("first_name", "") or ""),
+            str(slip.get("last_name", "") or ""),
+        ]).strip()
+        total_deductions = (
+            round_baht(slip.get("sick_deduction", 0))
+            + round_baht(slip.get("leave_day_deduction", 0))
+            + round_baht(slip.get("leave_hour_deduction", 0))
+            + round_baht(slip.get("late_deduction", 0))
+            + round_baht(slip.get("evaluation_deduction", 0))
+        )
+        auto_remarks = slip.get("deduction_remarks") or "No deductions"
+        manual_notes = str(slip.get("notes", "") or "").strip()
+        late_minutes = slip.get("late_mins")
+        if late_minutes in [None, ""]:
+            late_minutes = round_baht(float(slip.get("late_hours", 0) or 0) * 60)
+
+        def row(label, value, highlight=False):
+            cls = " class='highlight'" if highlight else ""
+            return f"<tr{cls}><td>{html.escape(label)}</td><td class='num'>{html.escape(str(value))}</td></tr>"
+
+        calculation_rows = "".join([
+            row("Service Weight", number(slip.get("service_weight", 0))),
+            row("Service Rate", money(slip.get("service_rate", 0))),
+            row("Gross Service", money(slip.get("gross_service", 0)), True),
+        ])
+        deduction_rows = "".join([
+            row("Sick Leave Deduction", money(slip.get("sick_deduction", 0))),
+            row("Leave Day Deduction", money(slip.get("leave_day_deduction", 0))),
+            row("Leave Hour Deduction", money(slip.get("leave_hour_deduction", 0))),
+            row("Late Deduction", money(slip.get("late_deduction", 0))),
+            row("Evaluation Deduction", money(slip.get("evaluation_deduction", 0))),
+            row("Deposit Deduction", money(slip.get("deposit_deduction", 0))),
+        ])
+        summary_rows = "".join([
+            row("Total After Deduction", money(slip.get("total_after_deduction", round_baht(slip.get("gross_service", 0)) - total_deductions))),
+            row("Deposit Deduction", money(slip.get("deposit_deduction", 0))),
+            row("Deposit Refund", money(slip.get("deposit_refund", 0))),
+            row("Net Service", money(slip.get("net_service", 0)), True),
+        ])
+        attendance_rows = "".join([
+            row("Sick Days", number(slip.get("sick_days", 0))),
+            row("Leave Days", number(slip.get("leave_days", 0))),
+            row("Leave Hours", number(slip.get("leave_hours", 0))),
+            row("Late Minutes", number(late_minutes)),
+            row("Evaluation %", f"{number(slip.get('evaluation_percent', 0))}%"),
+        ])
+
+        slip_blocks.append(f"""
+        <section class="service-slip-page">
+            <header class="slip-header">
+                <div>
+                    <h2>AONANG FIORE RESORT</h2>
+                    <h1>SERVICE CHARGE SLIP</h1>
+                </div>
+                <div class="slip-month">
+                    <span>Service Month</span>
+                    <strong>{html.escape(service_month_text(slip))}</strong>
+                </div>
+            </header>
+            <div class="employee-grid">
+                <div><span>Employee Code</span><strong>{html.escape(str(slip.get('emp_code', '') or ''))}</strong></div>
+                <div><span>Employee Name</span><strong>{html.escape(employee_name)}</strong></div>
+                <div><span>Department</span><strong>{html.escape(str(slip.get('department', '') or '-'))}</strong></div>
+            </div>
+            <div class="slip-grid">
+                <section>
+                    <h3>Calculation</h3>
+                    <table>{calculation_rows}</table>
+                </section>
+                <section>
+                    <h3>Deductions</h3>
+                    <table>{deduction_rows}</table>
+                </section>
+                <section>
+                    <h3>Summary</h3>
+                    <table>{summary_rows}</table>
+                </section>
+                <section>
+                    <h3>Attendance</h3>
+                    <table>{attendance_rows}</table>
+                </section>
+            </div>
+            <section class="remarks">
+                <h3>Remarks</h3>
+                <div><strong>Auto-generated attendance remarks:</strong> {html.escape(auto_remarks)}</div>
+                <div><strong>HR manual notes:</strong> {html.escape(manual_notes if manual_notes else "-")}</div>
+            </section>
+            <footer class="slip-signature">
+                <div>
+                    <span>Employee Signature</span>
+                    <strong>____________________________</strong>
+                </div>
+                <div>
+                    <span>Date</span>
+                    <strong>____________________________</strong>
+                </div>
+            </footer>
+        </section>""")
+
+    return f"""<style>
+        .service-slip-actions {{
+            margin: 0.5rem 0 1rem 0;
+        }}
+        .service-slip-print-btn {{
+            border: 1px solid #2f6f5e;
+            background: #2f6f5e;
+            color: white;
+            padding: 0.5rem 0.9rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }}
+        .service-slip-print-area {{
+            background: #f5f6f4;
+            padding: 12px;
+            color: #111;
+            font-family: Arial, sans-serif;
+        }}
+        .service-slip-page {{
+            background: white;
+            border: 1px solid #d7d7d7;
+            padding: 22px;
+            margin: 0 auto 16px auto;
+            max-width: 920px;
+            page-break-after: always;
+        }}
+        .service-slip-page:last-child {{
+            page-break-after: auto;
+        }}
+        .slip-header {{
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: flex-start;
+            border-bottom: 3px solid #2f6f5e;
+            padding-bottom: 12px;
+        }}
+        .slip-header h2 {{
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: 0;
+            color: #2f6f5e;
+        }}
+        .slip-header h1 {{
+            margin: 4px 0 0 0;
+            font-size: 18px;
+            letter-spacing: 0;
+        }}
+        .slip-month {{
+            text-align: right;
+            font-size: 12px;
+        }}
+        .slip-month span,
+        .employee-grid span,
+        .slip-signature span {{
+            display: block;
+            color: #555;
+            font-size: 11px;
+            margin-bottom: 3px;
+        }}
+        .slip-month strong {{
+            font-size: 16px;
+        }}
+        .employee-grid {{
+            display: grid;
+            grid-template-columns: 1fr 2fr 2fr;
+            gap: 10px;
+            margin: 14px 0;
+            padding: 10px;
+            border: 1px solid #dddddd;
+            background: #fbfbfb;
+        }}
+        .employee-grid strong {{
+            font-size: 13px;
+        }}
+        .slip-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }}
+        .slip-grid section,
+        .remarks {{
+            border: 1px solid #dddddd;
+            padding: 10px;
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }}
+        .slip-grid h3,
+        .remarks h3 {{
+            margin: 0 0 7px 0;
+            font-size: 13px;
+            color: #2f6f5e;
+        }}
+        .slip-grid table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+        .slip-grid td {{
+            border-bottom: 1px solid #eeeeee;
+            padding: 5px 0;
+        }}
+        .slip-grid .num {{
+            text-align: right;
+            font-weight: 600;
+            white-space: nowrap;
+        }}
+        .slip-grid tr.highlight td {{
+            border-top: 1px solid #777;
+            border-bottom: 2px double #777;
+            font-weight: 700;
+        }}
+        .remarks {{
+            margin-top: 12px;
+            font-size: 12px;
+            line-height: 1.7;
+        }}
+        .slip-signature {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 40px;
+            margin-top: 48px;
+            text-align: center;
+            font-size: 12px;
+        }}
+        .printed {{
+            max-width: 920px;
+            margin: 0 auto 8px auto;
+            font-size: 11px;
+            color: #555;
+            text-align: right;
+        }}
+        @media print {{
+            body * {{
+                visibility: hidden;
+            }}
+            .service-slip-print-area, .service-slip-print-area * {{
+                visibility: visible;
+            }}
+            .service-slip-print-area {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                background: white;
+                padding: 0;
+            }}
+            .service-slip-actions {{
+                display: none;
+            }}
+            .service-slip-page {{
+                border: 0;
+                max-width: none;
+                margin: 0;
+                padding: 0;
+            }}
+            @page {{
+                size: A4 portrait;
+                margin: 12mm;
+            }}
+        }}
+    </style>
+    <div class="service-slip-actions">
+        <button class="service-slip-print-btn" onclick="window.print()">{html.escape(button_label)}</button>
+    </div>
+    <div class="service-slip-print-area">
+        <div class="printed">Printed Date: {html.escape(printed_at)} {html.escape(title_suffix)}</div>
+        {''.join(slip_blocks)}
+    </div>"""
+
+def render_service_slip_v2(slip):
+    components.html(service_slip_v2_html(slip), height=980, scrolling=True)
+
+def render_service_slips_v2(slips, selected_month):
+    month_text = f"{selected_month.get('month', '')}-{selected_month.get('year', '')}"
+    components.html(service_slip_v2_html(slips, f"| {month_text}", print_all=True), height=980, scrolling=True)
+
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
     st.caption("Service setup, calculation, and reports")
@@ -1370,6 +1670,17 @@ def render_service_setup():
                         f"Credit {format_baht(monthly_jv.get('total_credit', 0))})."
                     )
                 render_monthly_jv_report(reports, selected_report_month)
+
+                st.markdown("### Service Charge Slips")
+                all_slips = api_get_json(service_api_path("/slips"))
+                month_slips = [
+                    slip for slip in all_slips
+                    if int(slip.get("service_month_id", 0) or 0) == int(selected_report_month["id"])
+                ]
+                if month_slips:
+                    render_service_slips_v2(month_slips, selected_report_month)
+                else:
+                    st.info("No service charge record for this month.")
             except Exception as e:
                 st.info(f"ยังไม่มีข้อมูล Service Calculation สำหรับเดือนนี้: {e}")
 
@@ -2017,23 +2328,7 @@ elif st.session_state["role"] == "employee":
             else:
                 record_log(f"พนักงานเข้าดูสลิป Service Charge รอบ: {my_service_data['service_month']}")
                 st.success(f"✅ พบข้อมูล Service Charge รอบ {my_service_data['service_month']}")
-                col1, col2, col3 = st.columns(3)
-                with col1: st.metric("Gross Service", f"{my_service_data['gross_service']:,.0f} บาท")
-                with col2: st.metric("Total Deductions", f"{(my_service_data['sick_deduction'] + my_service_data.get('leave_day_deduction', 0) + my_service_data['leave_hour_deduction'] + my_service_data['late_deduction'] + my_service_data['evaluation_deduction'] + my_service_data['deposit_deduction']):,.0f} บาท")
-                with col3: st.metric("Net Service", f"{my_service_data['net_service']:,.0f} บาท")
-
-                deduction_text = my_service_data.get("deduction_remarks") or "No deductions"
-                remark_parts = [
-                    f"Service Eligibility:{my_service_data.get('service_eligibility_percent', 0):g}%",
-                    f"Eligible Service Month:{my_service_data.get('eligible_service_month', '-')}",
-                    f"Gross Service:{my_service_data['gross_service']:,.0f}",
-                    deduction_text,
-                    f"Net Service:{my_service_data['net_service']:,.0f}"
-                ]
-                if my_service_data.get("notes"):
-                    remark_parts.append(f"Notes:{my_service_data['notes']}")
-                st.markdown("**Remark**")
-                st.info(", ".join(remark_parts))
+                render_service_slip_v2(my_service_data)
 
 # หน้าจอ Admin (เจ้าหน้าที่ HR)
 elif st.session_state["role"] == "admin":
