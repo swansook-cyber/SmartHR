@@ -1521,6 +1521,10 @@ def clean_addressed_to(value):
         return "ผู้เกี่ยวข้อง"
     return text_value
 
+def should_show_addressed_to(value):
+    text_value = str(value or "").strip()
+    return bool(text_value and text_value != "-" and text_value != "ผู้เกี่ยวข้อง" and text_value.lower() not in {"none", "null", "0"})
+
 def signer_display_name(value):
     text_value = str(value or "").strip()
     if not text_value or text_value.lower() in {"none", "null", "0"}:
@@ -1538,6 +1542,7 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     purpose_text = clean_certificate_text(purpose)
     addressed_text = clean_addressed_to(addressed_to)
+    addressed_line = f"<br>เรียน/ถึง {dotted_value(addressed_text)}" if should_show_addressed_to(addressed_to) else ""
     company = dict(DEFAULT_COMPANY_SETTINGS)
     company.update(company_settings or {})
     logo_uri = logo_data_uri(company.get("logo_path"))
@@ -1555,9 +1560,9 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
             <p>พนักงานดังกล่าวได้รับเงินเดือนประจำเดือนละ {dotted_value(format_baht(salary_amount))} บาท
             ({dotted_value(thai_baht_text(salary_amount))}) ซึ่งอัตรานี้ไม่รวมค่าตอบแทนและเงินพิเศษอื่น ๆ</p>
             <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text)}<br>
-            เรียน/ถึง {dotted_value(addressed_text)}</p>
+            {addressed_line}</p>
         """
-        source_line = f"<div class='source-line'>Salary Source: {html.escape(str(salary_source or '-'))}</div>"
+        source_line = ""
     else:
         document_body = f"""
             <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า นาย/นาง/นางสาว {dotted_value(name)}
@@ -1565,7 +1570,7 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
             แผนก {dotted_value(employee.get('department', '') or '-')} ตั้งแต่วันที่ {dotted_value(start_date_text)}
             ถึงวันที่ {dotted_value(period_end)} โดยมีสถานภาพการจ้างงาน {dotted_value(status)}</p>
             <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text)}<br>
-            เรียน/ถึง {dotted_value(addressed_text)}</p>
+            {addressed_line}</p>
         """
         source_line = ""
 
@@ -1613,8 +1618,12 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         }}
         .company-header .meta {{
             margin-top: 2px;
-            font-size: 18px;
+            font-size: 19px;
             line-height: 1.25;
+        }}
+        .company-header .meta.secondary {{
+            font-size: 16px;
+            line-height: 1.3;
         }}
         .hr-document h1 {{
             text-align: center;
@@ -1654,7 +1663,7 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         }}
         .authorized-signature {{
             width: 300px;
-            margin: 48px 7% 0 auto;
+            margin: 86px 7% 0 auto;
             text-align: center;
             font-size: 18px;
             line-height: 1.45;
@@ -1705,8 +1714,8 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
                 <div>
                     <h2>{html.escape(str(company.get('company_thai_name', '')))}</h2>
                     <div class="meta">{html.escape(str(company.get('company_english_name', '')))}</div>
-                    <div class="meta">{html.escape(str(company.get('address', '')))}</div>
-                    <div class="meta">เลขประจำตัวผู้เสียภาษี {html.escape(str(company.get('tax_id', '')))} โทร. {html.escape(str(company.get('phone', '')))}</div>
+                    <div class="meta secondary">{html.escape(str(company.get('address', '')))}</div>
+                    <div class="meta secondary">เลขประจำตัวผู้เสียภาษี {html.escape(str(company.get('tax_id', '')))} โทร. {html.escape(str(company.get('phone', '')))}</div>
                 </div>
             </div>
             <h1>{html.escape(title)}</h1>
