@@ -1484,7 +1484,7 @@ def thai_baht_text(value):
     return f"{text}บาทถ้วน"
 
 def dotted_value(value, min_width="auto"):
-    return f"<span class='dotline' style='min-width:{html.escape(min_width)}'>{html.escape(str(value or '-'))}</span>"
+    return f"<span class='dynamic-value' style='min-width:{html.escape(min_width)}'>{html.escape(str(value or '-'))}</span>"
 
 def thai_date_text(value):
     if value in [None, ""]:
@@ -1650,12 +1650,14 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
             margin: 7px 0 10px 0;
             text-indent: 38px;
         }}
-        .dotline {{
+        .dynamic-value {{
             display: inline;
-            border-bottom: 1px dotted #333;
+            border-bottom: none;
+            text-decoration: none;
+            font-weight: 600;
             line-height: 1.1;
             text-align: center;
-            padding: 0 5px 1px 5px;
+            padding: 0 2px;
         }}
         .source-line {{
             margin-top: 8px;
