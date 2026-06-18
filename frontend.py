@@ -1379,6 +1379,258 @@ def render_service_slips_v2(slips, selected_month):
     month_text = f"{selected_month.get('month', '')}-{selected_month.get('year', '')}"
     components.html(service_slip_v2_html(slips, f"| {month_text}", print_all=True), height=980, scrolling=True)
 
+def employee_full_name(employee):
+    return " ".join([
+        str(employee.get("first_name", "") or ""),
+        str(employee.get("last_name", "") or ""),
+    ]).strip()
+
+def employment_status_text(employee):
+    return "Active" if employee.get("is_active", True) else "Resigned"
+
+def latest_payroll_salary(emp_code):
+    try:
+        cycles = list(dict.fromkeys(api_get_json("/payroll/cycles")))
+    except Exception:
+        cycles = []
+    for cycle_name in sorted(cycles, reverse=True):
+        try:
+            payroll_data = api_get_json(f"/payroll/{cycle_name}")
+            transaction = next(
+                (row for row in payroll_data.get("transactions", []) if str(row.get("emp_code")) == str(emp_code)),
+                None
+            )
+            if transaction:
+                return transaction.get("base_salary", 0), payroll_data.get("cycle_name", cycle_name)
+        except Exception:
+            continue
+    return None, ""
+
+def hr_document_html(employee, document_type, issue_date, purpose, addressed_to, current_salary=None, salary_source="", end_date=None):
+    issue_date_text = issue_date.strftime("%d/%m/%Y") if hasattr(issue_date, "strftime") else str(issue_date)
+    end_date_text = end_date.strftime("%d/%m/%Y") if hasattr(end_date, "strftime") else str(end_date or "")
+    name = employee_full_name(employee)
+    status = employment_status_text(employee)
+    title = "SALARY CERTIFICATE" if document_type == "Salary Certificate" else "EMPLOYMENT CERTIFICATE"
+    printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    purpose_text = str(purpose or "-")
+    addressed_text = str(addressed_to or "-")
+
+    info_rows = [
+        ("Employee Name", name),
+        ("Employee Code", employee.get("emp_code", "")),
+        ("Position", employee.get("position", "") or "-"),
+        ("Department", employee.get("department", "") or "-"),
+        ("Start Date", employee.get("start_date", "") or "-"),
+        ("Employment Status", status),
+        ("Issue Date", issue_date_text),
+        ("Purpose / Addressed To", f"{purpose_text} / {addressed_text}"),
+    ]
+    if document_type == "Salary Certificate":
+        info_rows.insert(5, ("Current Salary", f"{format_baht(current_salary or employee.get('base_salary', 0))} Baht"))
+        if salary_source:
+            info_rows.insert(6, ("Salary Source", salary_source))
+    elif not employee.get("is_active", True):
+        info_rows.insert(5, ("End Date", end_date_text or "-"))
+
+    body_rows = "".join(
+        f"<tr><td>{html.escape(str(label))}</td><td>{html.escape(str(value))}</td></tr>"
+        for label, value in info_rows
+    )
+    certificate_intro = (
+        "This is to certify the employment and current salary information of the employee named below."
+        if document_type == "Salary Certificate"
+        else "This is to certify the employment information of the employee named below."
+    )
+
+    return f"""<style>
+        .hr-doc-actions {{
+            margin: 0.5rem 0 1rem 0;
+        }}
+        .hr-doc-print-btn {{
+            border: 1px solid #2f6f5e;
+            background: #2f6f5e;
+            color: white;
+            padding: 0.5rem 0.9rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }}
+        .hr-document {{
+            background: white;
+            color: #111;
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 28px;
+            border: 1px solid #d7d7d7;
+            font-family: Arial, sans-serif;
+        }}
+        .hr-document h2 {{
+            margin: 0;
+            font-size: 24px;
+            color: #2f6f5e;
+            letter-spacing: 0;
+        }}
+        .hr-document h1 {{
+            margin: 6px 0 4px 0;
+            font-size: 20px;
+            letter-spacing: 0;
+        }}
+        .hr-document .printed {{
+            font-size: 11px;
+            color: #555;
+            text-align: right;
+        }}
+        .hr-doc-header {{
+            border-bottom: 3px solid #2f6f5e;
+            padding-bottom: 12px;
+            margin-bottom: 22px;
+        }}
+        .hr-doc-body {{
+            font-size: 13px;
+            line-height: 1.7;
+        }}
+        .hr-doc-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 16px;
+            font-size: 13px;
+        }}
+        .hr-doc-table td {{
+            border-bottom: 1px solid #e7e7e7;
+            padding: 8px 6px;
+            vertical-align: top;
+        }}
+        .hr-doc-table td:first-child {{
+            width: 34%;
+            font-weight: 700;
+            color: #2f6f5e;
+        }}
+        .authorized-signature {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 28px;
+            margin-top: 78px;
+            font-size: 12px;
+        }}
+        .authorized-signature div {{
+            text-align: center;
+        }}
+        @media print {{
+            body * {{
+                visibility: hidden;
+            }}
+            .hr-document, .hr-document * {{
+                visibility: visible;
+            }}
+            .hr-document {{
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                max-width: none;
+                border: 0;
+                padding: 0;
+            }}
+            .hr-doc-actions {{
+                display: none;
+            }}
+            @page {{
+                size: A4 portrait;
+                margin: 16mm;
+            }}
+        }}
+    </style>
+    <div class="hr-doc-actions">
+        <button class="hr-doc-print-btn" onclick="window.print()">Print</button>
+    </div>
+    <article class="hr-document">
+        <header class="hr-doc-header">
+            <div class="printed">Printed Date: {html.escape(printed_at)}</div>
+            <h2>AONANG FIORE RESORT</h2>
+            <h1>{html.escape(title)}</h1>
+        </header>
+        <section class="hr-doc-body">
+            <p>{html.escape(certificate_intro)}</p>
+            <table class="hr-doc-table"><tbody>{body_rows}</tbody></table>
+            <p style="margin-top: 22px;">This certificate is issued upon request for the purpose stated above.</p>
+        </section>
+        <footer class="authorized-signature">
+            <div>____________________________<br>Authorized Signature</div>
+            <div>____________________________<br>Date</div>
+        </footer>
+    </article>"""
+
+def render_hr_documents_page():
+    st.title("HR Documents")
+    st.caption("Generate printable employee certificates")
+
+    try:
+        employees = api_get_json("/employees/")
+    except Exception as e:
+        st.error(f"ไม่สามารถโหลดข้อมูลพนักงานได้: {e}")
+        return
+
+    if not employees:
+        st.info("ยังไม่มีข้อมูลพนักงาน")
+        return
+
+    employee_options = {
+        f"{emp.get('emp_code', '')} - {employee_full_name(emp)}": emp
+        for emp in employees
+    }
+    with st.form("hr_documents_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_employee_label = st.selectbox("Select employee", list(employee_options.keys()))
+            document_type = st.selectbox(
+                "Select document type",
+                ["Salary Certificate", "Employment Certificate / Work Certificate"],
+            )
+            issue_date = st.date_input("Issue date", value=datetime.date.today())
+        with col2:
+            addressed_to = st.text_input("Addressed to", value="To whom it may concern")
+            purpose = st.text_area("Purpose", value="", height=92)
+            selected_employee = employee_options[selected_employee_label]
+            end_date = None
+            if not selected_employee.get("is_active", True):
+                end_date = st.date_input("End date if resigned", value=datetime.date.today())
+
+        generate_clicked = st.form_submit_button("Preview printable document", type="primary", use_container_width=True)
+
+    if not generate_clicked:
+        return
+
+    selected_employee = employee_options[selected_employee_label]
+    salary_value = selected_employee.get("base_salary", 0)
+    salary_source = "Employee master"
+    if document_type == "Salary Certificate":
+        latest_salary, payroll_cycle = latest_payroll_salary(selected_employee.get("emp_code"))
+        if latest_salary is not None:
+            salary_value = latest_salary
+            salary_source = f"Latest payroll cycle: {payroll_cycle}"
+        audit_event("Generate Salary Certificate", "HR Documents", selected_employee.get("emp_code"), f"purpose={purpose}, addressed_to={addressed_to}")
+        normalized_type = "Salary Certificate"
+    else:
+        audit_event("Generate Employment Certificate", "HR Documents", selected_employee.get("emp_code"), f"purpose={purpose}, addressed_to={addressed_to}")
+        normalized_type = "Employment Certificate"
+
+    st.markdown("### Preview")
+    components.html(
+        hr_document_html(
+            selected_employee,
+            normalized_type,
+            issue_date,
+            purpose,
+            addressed_to,
+            current_salary=salary_value,
+            salary_source=salary_source,
+            end_date=end_date,
+        ),
+        height=920,
+        scrolling=True,
+    )
+
 def render_service_setup():
     st.title("🧾 Service Charge (Beta)")
     st.caption("Service setup, calculation, and reports")
@@ -2339,9 +2591,12 @@ elif st.session_state["role"] == "admin":
             logout_user()
             st.rerun()
 
-    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "System > Audit Logs", "System > Backups"], key="admin_menu")
+    admin_menu = st.sidebar.radio("Menu", ["HR Dashboard", "Service Charge (Beta)", "HR Documents", "System > Audit Logs", "System > Backups"], key="admin_menu")
     if admin_menu == "Service Charge (Beta)":
         render_service_setup()
+        st.stop()
+    if admin_menu == "HR Documents":
+        render_hr_documents_page()
         st.stop()
     if admin_menu == "System > Audit Logs":
         render_audit_logs_page()
