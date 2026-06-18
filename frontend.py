@@ -1483,7 +1483,7 @@ def thai_baht_text(value):
                 text += "ล้าน"
     return f"{text}บาทถ้วน"
 
-def dotted_value(value, min_width="180px"):
+def dotted_value(value, min_width="auto"):
     return f"<span class='dotline' style='min-width:{html.escape(min_width)}'>{html.escape(str(value or '-'))}</span>"
 
 def thai_date_text(value):
@@ -1515,6 +1515,12 @@ def clean_certificate_text(value, default="เพื่อใช้เป็น�
         return default
     return text_value
 
+def clean_addressed_to(value):
+    text_value = str(value or "").strip()
+    if not text_value or text_value == "-" or text_value.lower() in {"none", "null", "0", "to whom it may concern"}:
+        return "ผู้เกี่ยวข้อง"
+    return text_value
+
 def signer_display_name(value):
     text_value = str(value or "").strip()
     if not text_value or text_value.lower() in {"none", "null", "0"}:
@@ -1531,7 +1537,7 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
     title = "หนังสือรับรองเงินเดือน" if is_salary else "หนังสือรับรองการทำงาน"
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     purpose_text = clean_certificate_text(purpose)
-    addressed_text = clean_certificate_text(addressed_to)
+    addressed_text = clean_addressed_to(addressed_to)
     company = dict(DEFAULT_COMPANY_SETTINGS)
     company.update(company_settings or {})
     logo_uri = logo_data_uri(company.get("logo_path"))
@@ -1542,21 +1548,24 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
 
     if is_salary:
         document_body = f"""
-            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า {dotted_value(name, "250px")} รหัสพนักงาน {dotted_value(employee.get('emp_code', ''), "105px")}
-            ปฏิบัติงานในตำแหน่ง {dotted_value(employee.get('position', '') or '-', "210px")} แผนก {dotted_value(employee.get('department', '') or '-', "205px")}
-            เริ่มงานเมื่อวันที่ {dotted_value(start_date_text, "185px")} ปัจจุบันมีสถานภาพการจ้างงาน {dotted_value(status, "120px")}</p>
-            <p>พนักงานดังกล่าวได้รับเงินเดือนปัจจุบันจำนวน {dotted_value(format_baht(salary_amount), "160px")} บาท
-            ({dotted_value(thai_baht_text(salary_amount), "320px")})</p>
-            <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text, "330px")} เรียน/ถึง {dotted_value(addressed_text, "250px")}</p>
+            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า นาย/นาง/นางสาว {dotted_value(name)}
+            รหัสพนักงาน {dotted_value(employee.get('emp_code', ''))} ปฏิบัติงานในตำแหน่ง {dotted_value(employee.get('position', '') or '-')}
+            แผนก {dotted_value(employee.get('department', '') or '-')} เริ่มงานเมื่อวันที่ {dotted_value(start_date_text)}
+            จนถึงปัจจุบัน โดยมีสถานภาพการจ้างงาน {dotted_value(status)}</p>
+            <p>พนักงานดังกล่าวได้รับเงินเดือนประจำเดือนละ {dotted_value(format_baht(salary_amount))} บาท
+            ({dotted_value(thai_baht_text(salary_amount))}) ซึ่งอัตรานี้ไม่รวมค่าตอบแทนและเงินพิเศษอื่น ๆ</p>
+            <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text)}<br>
+            เรียน/ถึง {dotted_value(addressed_text)}</p>
         """
         source_line = f"<div class='source-line'>Salary Source: {html.escape(str(salary_source or '-'))}</div>"
     else:
         document_body = f"""
-            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า {dotted_value(name, "250px")} รหัสพนักงาน {dotted_value(employee.get('emp_code', ''), "105px")}
-            ปฏิบัติงานในตำแหน่ง {dotted_value(employee.get('position', '') or '-', "210px")} แผนก {dotted_value(employee.get('department', '') or '-', "205px")}</p>
-            <p>เริ่มงานเมื่อวันที่ {dotted_value(start_date_text, "185px")} ถึงวันที่ {dotted_value(period_end, "180px")}
-            โดยมีสถานภาพการจ้างงาน {dotted_value(status, "160px")}</p>
-            <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text, "330px")} เรียน/ถึง {dotted_value(addressed_text, "250px")}</p>
+            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า นาย/นาง/นางสาว {dotted_value(name)}
+            รหัสพนักงาน {dotted_value(employee.get('emp_code', ''))} ได้ปฏิบัติงานกับบริษัทในตำแหน่ง {dotted_value(employee.get('position', '') or '-')}
+            แผนก {dotted_value(employee.get('department', '') or '-')} ตั้งแต่วันที่ {dotted_value(start_date_text)}
+            ถึงวันที่ {dotted_value(period_end)} โดยมีสถานภาพการจ้างงาน {dotted_value(status)}</p>
+            <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text)}<br>
+            เรียน/ถึง {dotted_value(addressed_text)}</p>
         """
         source_line = ""
 
@@ -1621,19 +1630,21 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         }}
         .hr-doc-body {{
             font-size: 20px;
-            line-height: 1.72;
+            line-height: 2.1;
             text-align: left;
+            width: 80%;
+            margin: 0 auto;
         }}
         .hr-doc-body p {{
-            margin: 8px 0;
+            margin: 7px 0 10px 0;
             text-indent: 38px;
         }}
         .dotline {{
-            display: inline-block;
+            display: inline;
             border-bottom: 1px dotted #333;
             line-height: 1.1;
             text-align: center;
-            padding: 0 6px;
+            padding: 0 5px 1px 5px;
         }}
         .source-line {{
             margin-top: 8px;
@@ -1643,7 +1654,7 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         }}
         .authorized-signature {{
             width: 300px;
-            margin: 44px 0 0 auto;
+            margin: 48px 7% 0 auto;
             text-align: center;
             font-size: 18px;
             line-height: 1.45;
@@ -1652,6 +1663,9 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
             margin: 4px 0 10px 0;
             text-align: right;
             font-size: 20px;
+            width: 80%;
+            margin-left: auto;
+            margin-right: auto;
         }}
         @media print {{
             body * {{
@@ -1668,6 +1682,8 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
                 max-width: none;
                 border: 0;
                 padding: 0;
+                page-break-after: avoid;
+                break-after: avoid;
             }}
             .hr-doc-actions {{
                 display: none;
@@ -1738,7 +1754,7 @@ def render_hr_documents_page():
             )
             issue_date = st.date_input("Issue date", value=datetime.date.today())
         with col2:
-            addressed_to = st.text_input("Addressed to", value="To whom it may concern")
+            addressed_to = st.text_input("Addressed to", value="")
             purpose = st.text_area("Purpose", value="", height=92)
             selected_employee = employee_options[selected_employee_label]
             end_date = None
