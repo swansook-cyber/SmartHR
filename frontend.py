@@ -1548,15 +1548,17 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
     logo_uri = logo_data_uri(company.get("logo_path"))
     logo_html = f"<img src='{logo_uri}' alt='Company logo'>" if logo_uri else ""
     salary_amount = round_baht(current_salary or employee.get("base_salary", 0))
-    period_end = end_date_text if not employee.get("is_active", True) and end_date_text != "-" else "จนถึงปัจจุบัน"
+    is_active_employee = bool(employee.get("is_active", True))
+    period_end = end_date_text if not is_active_employee and end_date_text != "-" else "จนถึงปัจจุบัน"
+    status_line = "" if is_active_employee else f" โดยมีสถานภาพการจ้างงาน {dotted_value(status)}"
     signer_name = signer_display_name(company.get("authorized_signer_name"))
 
     if is_salary:
         document_body = f"""
-            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า นาย/นาง/นางสาว {dotted_value(name)}
+            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า {dotted_value(name)}
             รหัสพนักงาน {dotted_value(employee.get('emp_code', ''))} ปฏิบัติงานในตำแหน่ง {dotted_value(employee.get('position', '') or '-')}
             แผนก {dotted_value(employee.get('department', '') or '-')} เริ่มงานเมื่อวันที่ {dotted_value(start_date_text)}
-            จนถึงปัจจุบัน โดยมีสถานภาพการจ้างงาน {dotted_value(status)}</p>
+            {period_end}{status_line}</p>
             <p>พนักงานดังกล่าวได้รับเงินเดือนประจำเดือนละ {dotted_value(format_baht(salary_amount))} บาท
             ({dotted_value(thai_baht_text(salary_amount))}) ซึ่งอัตรานี้ไม่รวมค่าตอบแทนและเงินพิเศษอื่น ๆ</p>
             <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text)}<br>
@@ -1565,10 +1567,10 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         source_line = ""
     else:
         document_body = f"""
-            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า นาย/นาง/นางสาว {dotted_value(name)}
+            <p>หนังสือฉบับนี้ออกให้เพื่อรับรองว่า {dotted_value(name)}
             รหัสพนักงาน {dotted_value(employee.get('emp_code', ''))} ได้ปฏิบัติงานกับบริษัทในตำแหน่ง {dotted_value(employee.get('position', '') or '-')}
             แผนก {dotted_value(employee.get('department', '') or '-')} ตั้งแต่วันที่ {dotted_value(start_date_text)}
-            ถึงวันที่ {dotted_value(period_end)} โดยมีสถานภาพการจ้างงาน {dotted_value(status)}</p>
+            ถึงวันที่ {dotted_value(period_end)}{status_line}</p>
             <p>หนังสือรับรองฉบับนี้ออกให้เพื่อ {dotted_value(purpose_text)}<br>
             {addressed_line}</p>
         """
@@ -1639,9 +1641,9 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
         }}
         .hr-doc-body {{
             font-size: 20px;
-            line-height: 2.1;
+            line-height: 2.0;
             text-align: left;
-            width: 80%;
+            width: 92%;
             margin: 0 auto;
         }}
         .hr-doc-body p {{
@@ -1672,7 +1674,7 @@ def hr_document_html(employee, document_type, issue_date, purpose, addressed_to,
             margin: 4px 0 10px 0;
             text-align: right;
             font-size: 20px;
-            width: 80%;
+            width: 92%;
             margin-left: auto;
             margin-right: auto;
         }}
