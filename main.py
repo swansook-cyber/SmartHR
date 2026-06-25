@@ -1661,6 +1661,71 @@ def get_service_summary_report(year: int, session: Session = Depends(get_db)):
 # 💰 ระบบประมวลผลเงินเดือน (Payroll)
 # ==========================================
 
+PAYROLL_LOCKED_MESSAGE = "Payroll month is locked. Unlock before modifying."
+
+def serialize_payroll_lock(lock):
+    return {
+        "cycle_name": lock.cycle_name if lock else "",
+        "is_locked": bool(lock.is_locked) if lock else False,
+        "locked_at": lock.locked_at if lock else None,
+        "locked_by": lock.locked_by if lock else None,
+        "lock_note": lock.lock_note if lock else None,
+    }
+
+def get_payroll_lock(session, cycle_name, create=False):
+    lock = session.query(db.PayrollCycleLock).filter(
+        db.PayrollCycleLock.cycle_name == str(cycle_name)
+    ).first()
+    if not lock and create:
+        lock = db.PayrollCycleLock(cycle_name=str(cycle_name), is_locked=False)
+        session.add(lock)
+        session.flush()
+    return lock
+
+def is_payroll_cycle_locked(session, cycle_name):
+    lock = get_payroll_lock(session, cycle_name)
+    return bool(lock and lock.is_locked)
+
+def block_locked_payroll_modification(session, cycle_name, username="-", action="Modify Payroll"):
+    if is_payroll_cycle_locked(session, cycle_name):
+        write_audit_log(
+            username or "-",
+            "Blocked modification attempt on locked payroll",
+            "Payroll",
+            cycle_name,
+            action
+        )
+        raise HTTPException(status_code=423, detail=PAYROLL_LOCKED_MESSAGE)
+
+@app.get("/payroll/cycles/{cycle_id}/lock-status")
+def get_payroll_cycle_lock_status(cycle_id: str, session: Session = Depends(get_db)):
+    return serialize_payroll_lock(get_payroll_lock(session, cycle_id))
+
+@app.post("/payroll/cycles/{cycle_id}/lock")
+def lock_payroll_cycle(cycle_id: str, data: dict = Body(default={}), session: Session = Depends(get_db)):
+    lock = get_payroll_lock(session, cycle_id, create=True)
+    lock.is_locked = True
+    lock.locked_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lock.locked_by = str(data.get("locked_by") or data.get("username") or "-")
+    lock.lock_note = str(data.get("lock_note") or "")
+    session.commit()
+    write_audit_log(lock.locked_by, "Lock Payroll Month", "Payroll", cycle_id, lock.lock_note or "")
+    return serialize_payroll_lock(lock)
+
+@app.post("/payroll/cycles/{cycle_id}/unlock")
+def unlock_payroll_cycle(cycle_id: str, data: dict = Body(default={}), session: Session = Depends(get_db)):
+    if str(data.get("role", "")).lower() != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    unlock_reason = str(data.get("unlock_reason") or "").strip()
+    if not unlock_reason:
+        raise HTTPException(status_code=400, detail="Unlock reason is required")
+    lock = get_payroll_lock(session, cycle_id, create=True)
+    lock.is_locked = False
+    session.commit()
+    username = str(data.get("unlocked_by") or data.get("username") or "-")
+    write_audit_log(username, "Unlock Payroll Month", "Payroll", cycle_id, unlock_reason)
+    return serialize_payroll_lock(lock)
+
 @app.get("/payroll/cycles")
 def get_payroll_cycles(session: Session = Depends(get_db)):
     cycles = session.query(db.PayrollTransaction.cycle_name).distinct().all()
@@ -1687,10 +1752,16 @@ def get_payroll_by_cycle(cycle_name: str, session: Session = Depends(get_db)):
             "sso_deduction": t.sso_deduction, "net_salary": t.net_salary
         })
         
-    return {"cycle_name": cycle_name, "payment_date": payment_date, "transactions": res_list}
+    return {
+        "cycle_name": cycle_name,
+        "payment_date": payment_date,
+        "lock": serialize_payroll_lock(get_payroll_lock(session, cycle_name)),
+        "transactions": res_list
+    }
 
 @app.delete("/payroll/{cycle_name}")
 def delete_payroll_cycle(cycle_name: str, username: str | None = None, session: Session = Depends(get_db)):
+    block_locked_payroll_modification(session, cycle_name, username or "-", "Delete Payroll Cycle")
     session.query(db.PayrollTransaction).filter(db.PayrollTransaction.cycle_name == cycle_name).delete()
     session.commit()
     write_audit_log(username or "-", "Delete Payroll Cycle", "Payroll", cycle_name, "")
@@ -1701,6 +1772,13 @@ def calculate_payroll(data: dict, session: Session = Depends(get_db)):
     cycle_name = data.get("cycle_name")
     payment_date = data.get("payment_date")
     time_data = data.get("time_data", [])
+    username = data.get("audit_username", "-")
+
+    if not data.get("payroll_month") or not data.get("payroll_year"):
+        raise HTTPException(status_code=400, detail="Please select payroll month and year before calculating.")
+    if not cycle_name:
+        raise HTTPException(status_code=400, detail="Please select payroll month and year before calculating.")
+    block_locked_payroll_modification(session, cycle_name, username, "Calculate Payroll")
     
     session.query(db.PayrollTransaction).filter(db.PayrollTransaction.cycle_name == cycle_name).delete()
     active_emps = session.query(db.Employee).filter(db.Employee.is_active == True).all()
@@ -1773,7 +1851,6 @@ def calculate_payroll(data: dict, session: Session = Depends(get_db)):
         transactions_to_add.append(new_tx)
         
     session.bulk_save_objects(transactions_to_add)
-    username = data.get("audit_username", "-")
     session.commit()
     if time_data:
         write_audit_log(username, "Upload Payroll", "Payroll", cycle_name, f"rows={len(time_data)}")

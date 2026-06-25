@@ -84,6 +84,25 @@ def audit_event(action, module, reference_id="", details="", username=None):
     except:
         pass
 
+def payroll_lock_status(cycle_name):
+    if not cycle_name:
+        return {"is_locked": False}
+    try:
+        return api_get_json(f"/payroll/cycles/{cycle_name}/lock-status")
+    except Exception:
+        return {"is_locked": False}
+
+def render_payroll_lock_badge(lock_status):
+    if lock_status.get("is_locked"):
+        st.error(
+            f"🔒 Payroll month is locked by {lock_status.get('locked_by') or '-'} "
+            f"at {lock_status.get('locked_at') or '-'}"
+        )
+        if lock_status.get("lock_note"):
+            st.caption(f"Lock note: {lock_status.get('lock_note')}")
+    else:
+        st.success("🔓 Payroll month is unlocked")
+
 def logout_user():
     audit_event("Logout", "Authentication")
     for key in ["authenticated", "role", "emp_code", "emp_name"]:
@@ -3079,30 +3098,49 @@ elif st.session_state["role"] == "admin":
     with tab2:
         st.header("สั่งรันเงินเดือนประจำรอบ")
         col_m, col_y, col_d = st.columns(3)
-        with col_m: sel_month = st.selectbox("📅 เลือกเดือน", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"])
-        with col_y: sel_year = st.selectbox("🗓️ เลือกปี", ["2026", "2027", "2028", "2029", "2030", "2031", "2032"])
+        month_options = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        year_options = ["", "2026", "2027", "2028", "2029", "2030", "2031", "2032"]
+        with col_m: sel_month = st.selectbox("📅 เลือกเดือน", month_options, format_func=lambda value: "เลือกเดือน" if value == "" else value)
+        with col_y: sel_year = st.selectbox("🗓️ เลือกปี", year_options, format_func=lambda value: "เลือกปี" if value == "" else value)
         with col_d: payment_date = st.date_input("💰 วันที่เงินเข้าบัญชี")
-        cycle_name = f"{sel_month}-{sel_year}"
+        payroll_period_selected = bool(sel_month and sel_year)
+        cycle_name = f"{sel_month}-{sel_year}" if payroll_period_selected else ""
+        selected_lock_status = payroll_lock_status(cycle_name) if payroll_period_selected else {"is_locked": False}
+        if payroll_period_selected:
+            render_payroll_lock_badge(selected_lock_status)
+        else:
+            st.warning("กรุณาเลือกเดือนและปีเงินเดือนก่อนคำนวณ")
 
         st.markdown("---")
         st.subheader("⏱️ อัปโหลดข้อมูลรายรับ-รายจ่ายเพิ่มเติม (Excel)")
         
         st.info("💡 หัวคอลัมน์ Excel: `emp_code`, `emp_name`, `ot_15_hours`, `ot_1_hours`, `late_mins`, `sick_days`, `absent_days`, `leave_hours`, `other_benefits`, `backpay`, `company_loan`, `student_loan`, `sso_manual` (sick_days เก็บประวัติเท่านั้น ไม่กระทบเงินเดือน / ใส่ยอดประกันสังคมสำหรับคนที่ต้องการล็อคยอด ถ้าไม่ใส่ระบบจะคิด 5% ตามปกติ)")
         
-        time_file = st.file_uploader("📂 อัปโหลดไฟล์ Excel", type=["xlsx", "csv"], key="payroll_file")
+        payroll_modify_disabled = (not payroll_period_selected) or bool(selected_lock_status.get("is_locked"))
+        time_file = st.file_uploader("📂 อัปโหลดไฟล์ Excel", type=["xlsx", "csv"], key="payroll_file", disabled=payroll_modify_disabled)
         time_data_list = [] 
         if time_file is not None:
             df_time = read_uploaded_table(time_file.name, time_file.getvalue())
             df_time['emp_code'] = df_time['emp_code'].astype(str).str.replace(r'\.0$', '', regex=True)
             time_data_list = df_time.fillna(0).to_dict(orient="records")
 
-        if st.button("🚀 รันระบบประมวลผลทันที", type="primary", use_container_width=True):
-            payload = {"cycle_name": cycle_name, "payment_date": str(payment_date), "time_data": time_data_list, "audit_username": current_username()}
+        if st.button("🚀 รันระบบประมวลผลทันที", type="primary", use_container_width=True, disabled=payroll_modify_disabled):
+            if not payroll_period_selected:
+                st.warning("กรุณาเลือกเดือนและปีเงินเดือนก่อนคำนวณ")
+                st.stop()
+            payload = {
+                "cycle_name": cycle_name,
+                "payroll_month": sel_month,
+                "payroll_year": sel_year,
+                "payment_date": str(payment_date),
+                "time_data": time_data_list,
+                "audit_username": current_username()
+            }
             try:
                 with st.spinner("กำลังประมวลผล..."):
                     res = requests.post(f"{API_URL}/payroll/calculate", json=payload, timeout=REQUEST_TIMEOUT)
                     if res.status_code == 200: clear_api_cache(); st.success(res.json()["message"]); st.balloons()
-                    else: st.error(f"❌ ขัดข้อง")
+                    else: st.error(f"❌ {res.text}")
             except: st.error("❌ เชื่อมต่อระบบหลังบ้านไม่ได้")
 
     with tab3:
@@ -3114,6 +3152,44 @@ elif st.session_state["role"] == "admin":
         if not available_cycles: st.info("📌 ยังไม่มีข้อมูลรอบการจ่ายเงินเดือนในระบบ")
         else:
             search_cycle = st.selectbox("📂 เลือกรอบการจ่ายที่ต้องการดาวน์โหลด", available_cycles, key="report_cycle")
+            report_lock_status = payroll_lock_status(search_cycle)
+            render_payroll_lock_badge(report_lock_status)
+
+            with st.expander("Payroll Month Lock"):
+                if not report_lock_status.get("is_locked"):
+                    lock_confirm = st.checkbox("Confirm lock payroll month", key=f"lock_confirm_{search_cycle}")
+                    lock_note = st.text_input("Lock note", key=f"lock_note_{search_cycle}")
+                    if st.button("🔒 Lock Payroll Month", use_container_width=True, disabled=not lock_confirm):
+                        res = requests.post(
+                            f"{API_URL}/payroll/cycles/{search_cycle}/lock",
+                            json={"locked_by": current_username(), "lock_note": lock_note},
+                            timeout=REQUEST_TIMEOUT
+                        )
+                        if res.status_code == 200:
+                            clear_api_cache()
+                            st.success("Payroll month locked.")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {res.text}")
+                else:
+                    unlock_confirm = st.checkbox("Confirm unlock payroll month", key=f"unlock_confirm_{search_cycle}")
+                    unlock_reason = st.text_input("Unlock reason", key=f"unlock_reason_{search_cycle}")
+                    if st.button("🔓 Unlock Payroll Month", use_container_width=True, disabled=(not unlock_confirm or not unlock_reason.strip())):
+                        res = requests.post(
+                            f"{API_URL}/payroll/cycles/{search_cycle}/unlock",
+                            json={
+                                "unlocked_by": current_username(),
+                                "role": st.session_state.get("role", ""),
+                                "unlock_reason": unlock_reason
+                            },
+                            timeout=REQUEST_TIMEOUT
+                        )
+                        if res.status_code == 200:
+                            clear_api_cache()
+                            st.success("Payroll month unlocked.")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {res.text}")
             
             st.markdown("---")
             st.subheader("⚖️ ตัวปรับสมดุลเศษสตางค์ (สำหรับไฟล์ธนาคาร SCB)")
@@ -3123,12 +3199,15 @@ elif st.session_state["role"] == "admin":
             
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1: search_clicked = st.button("🔍 ค้นหาข้อมูล", type="primary", use_container_width=True)
-            with col_btn2: delete_clicked = st.button("🗑️ ลบข้อมูลรอบนี้ทิ้ง", use_container_width=True)
+            with col_btn2: delete_clicked = st.button("🗑️ ลบข้อมูลรอบนี้ทิ้ง", use_container_width=True, disabled=bool(report_lock_status.get("is_locked")))
 
             if delete_clicked:
-                requests.delete(f"{API_URL}/payroll/{search_cycle}", params={"username": current_username()}, timeout=REQUEST_TIMEOUT)
-                clear_api_cache()
-                st.rerun()
+                res = requests.delete(f"{API_URL}/payroll/{search_cycle}", params={"username": current_username()}, timeout=REQUEST_TIMEOUT)
+                if res.status_code == 200:
+                    clear_api_cache()
+                    st.rerun()
+                else:
+                    st.error(f"❌ {res.text}")
 
             if search_clicked:
                 try:

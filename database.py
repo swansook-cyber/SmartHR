@@ -66,6 +66,16 @@ class PayrollTransaction(Base):
     
     net_salary = Column(Float, default=0.0)
 
+class PayrollCycleLock(Base):
+    __tablename__ = "payroll_cycle_locks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_name = Column(String, unique=True, index=True)
+    is_locked = Column(Boolean, default=False)
+    locked_at = Column(String, nullable=True)
+    locked_by = Column(String, nullable=True)
+    lock_note = Column(String, nullable=True)
+
 # 📜 ตารางเก็บประวัติการใช้งาน
 class AccessLog(Base):
     __tablename__ = "access_logs"
