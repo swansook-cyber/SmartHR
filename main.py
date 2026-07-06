@@ -1145,7 +1145,10 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
 
 def serialize_service_summary_report(service_month, service_rows):
     month_data = serialize_service_month(service_month)
-    actual_paid = sum(round_baht(row.net_service or 0) + round_baht(row.deposit_deduction or 0) for row in service_rows)
+    actual_paid = sum(
+        service_row_total_after_deduction(serialize_service_employee(row))
+        for row in service_rows
+    )
     deposit_total = sum(round_baht(row.deposit_deduction or 0) for row in service_rows)
     employee_pool = round_baht(month_data["employee_pool"])
     balance_returned = round_baht(employee_pool - actual_paid)
