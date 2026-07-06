@@ -847,6 +847,15 @@ def calculate_service_amounts(row):
 def service_row_total_after_deduction(row):
     if "total_after_deduction" in row:
         return round_baht(row.get("total_after_deduction", 0))
+    deduction_amount = (
+        round_baht(row.get("sick_deduction", 0))
+        + round_baht(row.get("leave_day_deduction", 0))
+        + round_baht(row.get("leave_hour_deduction", 0))
+        + round_baht(row.get("late_deduction", 0))
+        + round_baht(row.get("evaluation_deduction", 0))
+    )
+    if "gross_service" in row:
+        return round_baht(row.get("gross_service", 0)) - deduction_amount
     return round_baht(row.get("net_service", 0)) + round_baht(row.get("deposit_deduction", 0))
 
 def month_number(month_name):
@@ -883,6 +892,14 @@ def serialize_service_employee(row):
         "evaluation_deduction": row.evaluation_deduction or 0.0,
         "deposit_deduction": row.deposit_deduction or 0.0,
         "net_service": row.net_service or 0.0,
+        "total_after_deduction": service_row_total_after_deduction({
+            "gross_service": row.gross_service or 0.0,
+            "sick_deduction": row.sick_deduction or 0.0,
+            "leave_day_deduction": row.leave_day_deduction or 0.0,
+            "leave_hour_deduction": row.leave_hour_deduction or 0.0,
+            "late_deduction": row.late_deduction or 0.0,
+            "evaluation_deduction": row.evaluation_deduction or 0.0,
+        }),
         "notes": sanitize_service_manual_notes(row.notes)
     }
 
@@ -960,16 +977,81 @@ def service_summary_totals(summary):
         "balance_returned_to_resort": round_baht(summary.get("balance_returned_to_resort", 0)),
     }
 
-def validate_service_summary_consistency(preview_summary, saved_summary):
+def service_consistency_value(row, field):
+    if field == "employee_name":
+        return " ".join([
+            str(row.get("first_name", "") or ""),
+            str(row.get("last_name", "") or ""),
+        ]).strip()
+    if field == "service_amount":
+        return service_row_total_after_deduction(row)
+    if field == "deposit":
+        return round_baht(row.get("deposit_deduction", 0))
+    if field == "sick":
+        return round_baht(row.get("sick_deduction", 0))
+    if field == "leave":
+        return round_baht(row.get("leave_day_deduction", 0)) + round_baht(row.get("leave_hour_deduction", 0))
+    if field == "late":
+        return round_baht(row.get("late_deduction", 0))
+    if field == "eligibility":
+        return float(row.get("service_weight", 0) or 0)
+    return row.get(field)
+
+def service_consistency_diagnostics(preview_rows, saved_rows):
+    saved_by_code = {str(row.get("emp_code", "")): row for row in saved_rows}
+    preview_by_code = {str(row.get("emp_code", "")): row for row in preview_rows}
+    all_codes = sorted(set(preview_by_code.keys()) | set(saved_by_code.keys()))
+    compare_fields = ["service_amount", "deposit", "sick", "leave", "late", "eligibility"]
+    diagnostics = []
+    changed = []
+    for emp_code in all_codes:
+        preview = preview_by_code.get(emp_code, {})
+        saved = saved_by_code.get(emp_code, {})
+        row_log = {
+            "employee_id": emp_code,
+            "employee_name": service_consistency_value(preview or saved, "employee_name"),
+            "preview_service_amount": service_consistency_value(preview, "service_amount") if preview else None,
+            "saved_service_amount": service_consistency_value(saved, "service_amount") if saved else None,
+            "preview_deposit": service_consistency_value(preview, "deposit") if preview else None,
+            "saved_deposit": service_consistency_value(saved, "deposit") if saved else None,
+            "preview_sick": service_consistency_value(preview, "sick") if preview else None,
+            "saved_sick": service_consistency_value(saved, "sick") if saved else None,
+            "preview_leave": service_consistency_value(preview, "leave") if preview else None,
+            "saved_leave": service_consistency_value(saved, "leave") if saved else None,
+            "preview_late": service_consistency_value(preview, "late") if preview else None,
+            "saved_late": service_consistency_value(saved, "late") if saved else None,
+            "preview_eligibility": service_consistency_value(preview, "eligibility") if preview else None,
+            "saved_eligibility": service_consistency_value(saved, "eligibility") if saved else None,
+            "changed_fields": [],
+        }
+        for field in compare_fields:
+            preview_value = service_consistency_value(preview, field) if preview else None
+            saved_value = service_consistency_value(saved, field) if saved else None
+            if preview_value != saved_value:
+                row_log["changed_fields"].append({
+                    "field": field,
+                    "preview": preview_value,
+                    "saved": saved_value,
+                })
+        diagnostics.append(row_log)
+        if row_log["changed_fields"]:
+            changed.append(row_log)
+    print("[service-consistency] employee diagnostics:")
+    print(json.dumps(diagnostics, ensure_ascii=False, default=str))
+    return {"employees": diagnostics, "changed_employees": changed}
+
+def validate_service_summary_consistency(preview_summary, saved_summary, preview_rows=None, saved_rows=None):
     preview_totals = service_summary_totals(preview_summary)
     saved_totals = service_summary_totals(saved_summary)
     if preview_totals != saved_totals:
+        diagnostics = service_consistency_diagnostics(preview_rows or [], saved_rows or [])
         raise HTTPException(
             status_code=400,
             detail={
                 "message": "Service calculation consistency error: preview totals do not match saved totals",
                 "preview_totals": preview_totals,
                 "saved_totals": saved_totals,
+                "changed_employees": diagnostics["changed_employees"],
             }
         )
 
@@ -1485,7 +1567,12 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         [serialize_service_employee(row) for row in saved_rows]
     )
     try:
-        validate_service_summary_consistency(summary, saved_summary)
+        validate_service_summary_consistency(
+            summary,
+            saved_summary,
+            rows,
+            [serialize_service_employee(row) for row in saved_rows]
+        )
     except HTTPException:
         session.rollback()
         raise
