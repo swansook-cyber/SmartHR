@@ -211,6 +211,8 @@ def assert_service_total_consistency(preview_totals, saved_summary, reloaded_sum
             raise ValueError(f"Preview totals {preview_totals} do not match reloaded totals {reloaded_totals}")
 
 def service_row_total_after_deduction(row):
+    # Mirror the backend Service Charge total helper. Calculation, reports,
+    # cash preparation, JV, and slips must not invent separate total formulas.
     if "total_after_deduction" in row:
         return round_baht(row.get("total_after_deduction", 0))
     deduction_amount = (
@@ -226,6 +228,8 @@ def service_row_total_after_deduction(row):
     return round_baht(row.get("net_service", 0)) + round_baht(row.get("deposit_deduction", 0))
 
 def recalculate_service_rows(rows, service_rate):
+    # Frontend preview uses the same deduction cap order as main.calculate_service_amounts.
+    # Save/reload validation expects these totals to match the backend exactly.
     recalculated = []
     for row in rows:
         service_weight = float(row.get("service_weight", 0) or 0)

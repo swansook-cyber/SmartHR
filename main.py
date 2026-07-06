@@ -806,6 +806,9 @@ def calculate_late_deduction(gross_service, late_hours):
     return round_baht(gross_service)
 
 def calculate_service_amounts(row):
+    # Canonical Service Charge deduction order. Preview, save, reload, reports,
+    # cash preparation, JV, and slips must derive totals from this helper or
+    # from service_row_total_after_deduction instead of reimplementing formulas.
     gross_service = round_baht(row.get("gross_service", 0))
     sick_days = float(row.get("sick_days", 0) or 0)
     leave_days = float(row.get("leave_days", 0) or 0)
@@ -852,6 +855,8 @@ def calculate_service_amounts(row):
     }
 
 def service_row_total_after_deduction(row):
+    # Shared report total helper: Summary Actual Paid and JV department debit
+    # are SUM(Total After Deduction); Cash Preparation remains SUM(Net Service).
     if "total_after_deduction" in row:
         return round_baht(row.get("total_after_deduction", 0))
     deduction_amount = (
