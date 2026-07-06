@@ -819,18 +819,21 @@ def calculate_service_amounts(row):
     leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
     late_deduction = calculate_late_deduction(gross_service, late_hours)
     evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
-    net_service = max(
-        0,
-        round_baht(
-            gross_service
-            - sick_deduction
-            - leave_day_deduction
-            - leave_hour_deduction
-            - late_deduction
-            - evaluation_deduction
-            - deposit_deduction
-        )
+    raw_deduction_total = (
+        sick_deduction
+        + leave_day_deduction
+        + leave_hour_deduction
+        + late_deduction
+        + evaluation_deduction
     )
+    applied_deduction = min(gross_service, raw_deduction_total)
+    total_after_deduction = max(0, round_baht(gross_service - applied_deduction))
+    deduction_capped = raw_deduction_total > gross_service
+    if total_after_deduction <= 0:
+        deposit_deduction = 0
+    else:
+        deposit_deduction = min(deposit_deduction, total_after_deduction)
+    net_service = max(0, round_baht(total_after_deduction - deposit_deduction))
 
     return {
         "sick_deduction": sick_deduction,
@@ -841,6 +844,10 @@ def calculate_service_amounts(row):
         "late_hours": late_hours,
         "late_deduction": late_deduction,
         "evaluation_deduction": evaluation_deduction,
+        "deduction_amount": applied_deduction,
+        "total_after_deduction": total_after_deduction,
+        "deposit_deduction": deposit_deduction,
+        "deduction_capped": deduction_capped,
         "net_service": net_service
     }
 
@@ -855,7 +862,7 @@ def service_row_total_after_deduction(row):
         + round_baht(row.get("evaluation_deduction", 0))
     )
     if "gross_service" in row:
-        return round_baht(row.get("gross_service", 0)) - deduction_amount
+        return max(0, round_baht(row.get("gross_service", 0)) - min(round_baht(row.get("gross_service", 0)), deduction_amount))
     return round_baht(row.get("net_service", 0)) + round_baht(row.get("deposit_deduction", 0))
 
 def month_number(month_name):
@@ -906,6 +913,14 @@ def serialize_service_employee(row):
 def serialize_service_slip(row, service_month, employee=None, payroll_input=None):
     payroll_input = payroll_input or {}
     late_mins = payroll_input.get("late_mins")
+    total_after_deduction = service_row_total_after_deduction({
+        "gross_service": row.gross_service or 0.0,
+        "sick_deduction": row.sick_deduction or 0.0,
+        "leave_day_deduction": row.leave_day_deduction or 0.0,
+        "leave_hour_deduction": row.leave_hour_deduction or 0.0,
+        "late_deduction": row.late_deduction or 0.0,
+        "evaluation_deduction": row.evaluation_deduction or 0.0,
+    })
     return {
         "service_month_id": service_month.id,
         "service_month": f"{service_month.month}-{service_month.year}",
@@ -931,12 +946,7 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
         "late_deduction": row.late_deduction or 0.0,
         "evaluation_percent": row.evaluation_percent or 0.0,
         "evaluation_deduction": row.evaluation_deduction or 0.0,
-        "total_after_deduction": round_baht(row.gross_service or 0.0)
-            - round_baht(row.sick_deduction or 0.0)
-            - round_baht(row.leave_day_deduction or 0.0)
-            - round_baht(row.leave_hour_deduction or 0.0)
-            - round_baht(row.late_deduction or 0.0)
-            - round_baht(row.evaluation_deduction or 0.0),
+        "total_after_deduction": total_after_deduction,
         "deposit_deduction": row.deposit_deduction or 0.0,
         "deposit_refund": 0,
         "net_service": row.net_service or 0.0,
@@ -946,7 +956,13 @@ def serialize_service_slip(row, service_month, employee=None, payroll_input=None
             "leave_hours": row.leave_hours or 0.0,
             "late_mins": late_mins,
             "late_hours": row.late_hours or 0.0,
+            "gross_service": row.gross_service or 0.0,
+            "sick_deduction": row.sick_deduction or 0.0,
+            "leave_day_deduction": row.leave_day_deduction or 0.0,
+            "leave_hour_deduction": row.leave_hour_deduction or 0.0,
+            "late_deduction": row.late_deduction or 0.0,
             "evaluation_percent": row.evaluation_percent or 0.0,
+            "evaluation_deduction": row.evaluation_deduction or 0.0,
             "deposit_deduction": row.deposit_deduction or 0.0
         }),
         "notes": sanitize_service_manual_notes(row.notes)
@@ -1109,6 +1125,16 @@ def service_attendance_remarks(row):
         remarks.append(f"Late: {format_service_remark_number(late_hours)} {unit}")
     if evaluation_percent > 0:
         remarks.append(f"Evaluation: {format_service_remark_number(evaluation_percent)}%")
+    gross_service = round_baht(row.get("gross_service", 0))
+    deduction_total = (
+        round_baht(row.get("sick_deduction", 0))
+        + round_baht(row.get("leave_day_deduction", 0))
+        + round_baht(row.get("leave_hour_deduction", 0))
+        + round_baht(row.get("late_deduction", 0))
+        + round_baht(row.get("evaluation_deduction", 0))
+    )
+    if gross_service > 0 and deduction_total > gross_service:
+        remarks.append("Deduction capped at service amount")
     return ", ".join(remarks)
 
 def serialize_service_detail_report(row, employee=None, payroll_input=None):
@@ -1121,8 +1147,10 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
     display_department = getattr(employee, "department", None) if employee else None
     display_position = getattr(employee, "position", None) if employee else None
     display_start_date = getattr(employee, "start_date", None) if employee else None
-    deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_day_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
-    total_after_deduction = round_baht(data.get("gross_service", 0)) - deduction_amount
+    raw_deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_day_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
+    income_amount = round_baht(data.get("gross_service", 0))
+    deduction_amount = min(income_amount, raw_deduction_amount)
+    total_after_deduction = max(0, income_amount - deduction_amount)
     notes = sanitize_service_manual_notes(data.get("notes", ""))
     deduction_remarks = service_attendance_remarks(data)
     remarks = ", ".join(part for part in [deduction_remarks, notes] if part)
@@ -1134,7 +1162,7 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
         "position": display_position if display_position is not None else data.get("position", "") or "",
         "start_date": display_start_date if display_start_date is not None else "",
         "service_percent": round_baht(float(data.get("service_weight", 0) or 0) * 100),
-        "income_amount": round_baht(data.get("gross_service", 0)),
+        "income_amount": income_amount,
         "deduction_amount": deduction_amount,
         "total_after_deduction": total_after_deduction,
         "deposit_refund": 0,
@@ -1415,7 +1443,10 @@ def preview_service_calculation(service_month_id: int, manual_service_rate: floa
             "late_deduction": amounts["late_deduction"],
             "evaluation_percent": evaluation_percent or 0.0,
             "evaluation_deduction": amounts["evaluation_deduction"],
-            "deposit_deduction": round_baht(deposit_deduction or 0),
+            "deduction_amount": amounts["deduction_amount"],
+            "total_after_deduction": amounts["total_after_deduction"],
+            "deduction_capped": amounts["deduction_capped"],
+            "deposit_deduction": amounts["deposit_deduction"],
             "net_service": amounts["net_service"],
             "source": payroll_input.get("source", ""),
             "payroll_cycle_id": payroll_input.get("payroll_cycle_id"),
@@ -1461,6 +1492,16 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
         late_hours = float(normalized.get("late_hours", 0.0) or 0.0)
         evaluation_percent = float(normalized.get("evaluation_percent", 0.0) or 0.0)
         deposit_deduction = round_baht(normalized.get("deposit_deduction", 0.0))
+        amounts = calculate_service_amounts({
+            "gross_service": gross_service,
+            "sick_days": sick_days,
+            "leave_days": leave_days,
+            "leave_hours": leave_hours,
+            "late_hours": late_hours,
+            "evaluation_percent": evaluation_percent,
+            "deposit_deduction": deposit_deduction
+        })
+        deposit_deduction = amounts["deposit_deduction"]
         prior_deposit_total = service_deposit_total_before(session, normalized.get("emp_code", ""), service_month_id, service_month)
         service_type = str(getattr(employee, "service_type", normalized.get("service_type", "AUTO")) or "AUTO").upper()
         expected_auto_deposit = default_service_deposit(employee, service_month, service_weight, prior_deposit_total) if employee else deposit_deduction
@@ -1491,16 +1532,6 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
                 detail=f"Deposit deduction for {normalized.get('emp_code', '')} exceeds 1,500 Baht total"
             )
 
-        amounts = calculate_service_amounts({
-            "gross_service": gross_service,
-            "sick_days": sick_days,
-            "leave_days": leave_days,
-            "leave_hours": leave_hours,
-            "late_hours": late_hours,
-            "evaluation_percent": evaluation_percent,
-            "deposit_deduction": deposit_deduction
-        })
-
         normalized.update({
             "first_name": employee.first_name if employee else normalized.get("first_name", ""),
             "last_name": employee.last_name if employee else normalized.get("last_name", ""),
@@ -1522,7 +1553,10 @@ def save_service_calculation(service_month_id: int, data: dict, session: Session
             "late_deduction": amounts["late_deduction"],
             "evaluation_percent": evaluation_percent,
             "evaluation_deduction": amounts["evaluation_deduction"],
-            "deposit_deduction": deposit_deduction,
+            "deduction_amount": amounts["deduction_amount"],
+            "total_after_deduction": amounts["total_after_deduction"],
+            "deduction_capped": amounts["deduction_capped"],
+            "deposit_deduction": amounts["deposit_deduction"],
             "net_service": amounts["net_service"]
         })
         rows.append(normalized)

@@ -213,6 +213,16 @@ def assert_service_total_consistency(preview_totals, saved_summary, reloaded_sum
 def service_row_total_after_deduction(row):
     if "total_after_deduction" in row:
         return round_baht(row.get("total_after_deduction", 0))
+    deduction_amount = (
+        round_baht(row.get("sick_deduction", 0))
+        + round_baht(row.get("leave_day_deduction", 0))
+        + round_baht(row.get("leave_hour_deduction", 0))
+        + round_baht(row.get("late_deduction", 0))
+        + round_baht(row.get("evaluation_deduction", 0))
+    )
+    if "gross_service" in row:
+        gross_service = round_baht(row.get("gross_service", 0))
+        return max(0, gross_service - min(gross_service, deduction_amount))
     return round_baht(row.get("net_service", 0)) + round_baht(row.get("deposit_deduction", 0))
 
 def recalculate_service_rows(rows, service_rate):
@@ -237,8 +247,14 @@ def recalculate_service_rows(rows, service_rate):
         leave_hour_deduction = round_baht(gross_service / 30 / 8 * leave_hours)
         late_deduction = round_baht(gross_service * late_hours * 0.10) if late_hours <= 5 else gross_service
         evaluation_deduction = round_baht(gross_service * evaluation_percent / 100)
-        total_after_deduction = round_baht(gross_service - sick_deduction - leave_day_deduction - leave_hour_deduction - late_deduction - evaluation_deduction)
-        net_service = max(0, round_baht(gross_service - sick_deduction - leave_day_deduction - leave_hour_deduction - late_deduction - evaluation_deduction - deposit_deduction))
+        raw_deduction_total = sick_deduction + leave_day_deduction + leave_hour_deduction + late_deduction + evaluation_deduction
+        applied_deduction = min(gross_service, raw_deduction_total)
+        total_after_deduction = max(0, round_baht(gross_service - applied_deduction))
+        if total_after_deduction <= 0:
+            deposit_deduction = 0
+        else:
+            deposit_deduction = min(deposit_deduction, total_after_deduction)
+        net_service = max(0, round_baht(total_after_deduction - deposit_deduction))
         new_row = dict(row)
         new_row.update({
             "service_rate": float(service_rate or 0),
@@ -253,7 +269,9 @@ def recalculate_service_rows(rows, service_rate):
             "late_deduction": late_deduction,
             "evaluation_percent": evaluation_percent,
             "evaluation_deduction": evaluation_deduction,
+            "deduction_amount": applied_deduction,
             "total_after_deduction": total_after_deduction,
+            "deduction_capped": raw_deduction_total > gross_service,
             "deposit_deduction": deposit_deduction,
             "net_service": net_service,
             "notes": row.get("notes", "")
