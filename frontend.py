@@ -319,16 +319,9 @@ def service_report_rates(rows, summary):
     return round_baht(full_rate * 0.50), full_rate
 
 def service_detail_report_html(reports, selected_month):
-    raw_rows = reports.get("service_detail", [])
+    rows = reports.get("service_detail", [])
     summary = reports.get("summary", {})
-    half_rate, full_rate = service_report_rates(raw_rows, summary)
-    rows = []
-    for row in raw_rows:
-        display_row = dict(row)
-        display_row["income_amount"] = round_baht(
-            display_row.get("total_after_deduction", display_row.get("income_amount", 0))
-        )
-        rows.append(display_row)
+    half_rate, full_rate = service_report_rates(rows, summary)
     title = f"Service Charge {selected_month['month']} {selected_month['year']}"
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     columns = [
@@ -2023,7 +2016,8 @@ def render_service_setup():
                     for row in rows:
                         emp_inputs = preserved_inputs.get(str(row.get("emp_code")), {})
                         for field in [
-                            "evaluation_percent", "notes"
+                            "sick_days", "leave_days", "leave_hours", "late_hours",
+                            "evaluation_percent", "deposit_deduction", "notes"
                         ]:
                             if field in emp_inputs:
                                 row[field] = emp_inputs[field]
@@ -2104,7 +2098,12 @@ def render_service_setup():
                 if recalc_clicked:
                     st.session_state[refresh_key] = {
                         str(row.get("emp_code")): {
+                            "sick_days": row.get("sick_days", 0),
+                            "leave_days": row.get("leave_days", 0),
+                            "leave_hours": row.get("leave_hours", 0),
+                            "late_hours": row.get("late_hours", 0),
                             "evaluation_percent": row.get("evaluation_percent", 0),
+                            "deposit_deduction": row.get("deposit_deduction", 0),
                             "notes": row.get("notes", "")
                         }
                         for row in edited_rows
@@ -2119,17 +2118,12 @@ def render_service_setup():
                 employee_pool = round_baht(summary.get("employee_pool", 0))
                 balance_returned = employee_pool - actual_paid
 
-                service_result_df = pd.DataFrame(recalculated_rows)
                 st.dataframe(
-                    service_result_df[[
-                        "emp_code", "employee_name", "department", "source", "total_after_deduction", "sick_deduction",
+                    pd.DataFrame(recalculated_rows)[[
+                        "emp_code", "employee_name", "department", "source", "gross_service", "sick_deduction",
                         "leave_day_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "deposit_deduction", "net_service", "notes"
                     ]],
-                    use_container_width=True,
-                    column_config={
-                        "total_after_deduction": st.column_config.NumberColumn("Paid Service Amount", format="%d"),
-                        "net_service": st.column_config.NumberColumn("Net Service", format="%d"),
-                    }
+                    use_container_width=True
                 )
 
                 st.markdown("---")
