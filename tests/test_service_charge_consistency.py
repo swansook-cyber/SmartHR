@@ -137,6 +137,8 @@ class ServiceChargeConsistencyTest(unittest.TestCase):
         capped_detail = next(row for row in detail_rows if row["emp_code"] == "FB-001")
         capped_slip = next(row for row in slip_rows if row["emp_code"] == "FB-001")
         self.assertEqual(capped_detail["deduction_amount"], 1115)
+        self.assertEqual(capped_detail["gross_service_amount"], 1115)
+        self.assertEqual(capped_detail["income_amount"], 0)
         self.assertEqual(capped_detail["total_after_deduction"], 0)
         self.assertEqual(capped_detail["deposit_deduction"], 0)
         self.assertEqual(capped_detail["net_service"], 0)

@@ -71,6 +71,9 @@ Deduction capped at service amount
 - Cash Preparation Grand Total = `SUM(Net Service)`
 - Monthly JV Department Debit = `SUM(Total After Deduction)` grouped by JV
   department code
+- Service Detail Report displayed Income Amount = `Total After Deduction`
+  because the printed report must show the amount actually paid, not the gross
+  service amount before deductions.
 
 ## Shared Helpers
 

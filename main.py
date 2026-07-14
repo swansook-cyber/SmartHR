@@ -1153,9 +1153,9 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
     display_position = getattr(employee, "position", None) if employee else None
     display_start_date = getattr(employee, "start_date", None) if employee else None
     raw_deduction_amount = round_baht(data.get("sick_deduction", 0)) + round_baht(data.get("leave_day_deduction", 0)) + round_baht(data.get("leave_hour_deduction", 0)) + round_baht(data.get("late_deduction", 0)) + round_baht(data.get("evaluation_deduction", 0))
-    income_amount = round_baht(data.get("gross_service", 0))
-    deduction_amount = min(income_amount, raw_deduction_amount)
-    total_after_deduction = max(0, income_amount - deduction_amount)
+    gross_service = round_baht(data.get("gross_service", 0))
+    deduction_amount = min(gross_service, raw_deduction_amount)
+    total_after_deduction = max(0, gross_service - deduction_amount)
     notes = sanitize_service_manual_notes(data.get("notes", ""))
     deduction_remarks = service_attendance_remarks(data)
     remarks = ", ".join(part for part in [deduction_remarks, notes] if part)
@@ -1167,7 +1167,8 @@ def serialize_service_detail_report(row, employee=None, payroll_input=None):
         "position": display_position if display_position is not None else data.get("position", "") or "",
         "start_date": display_start_date if display_start_date is not None else "",
         "service_percent": round_baht(float(data.get("service_weight", 0) or 0) * 100),
-        "income_amount": income_amount,
+        "gross_service_amount": gross_service,
+        "income_amount": total_after_deduction,
         "deduction_amount": deduction_amount,
         "total_after_deduction": total_after_deduction,
         "deposit_refund": 0,

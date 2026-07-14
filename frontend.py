@@ -305,12 +305,16 @@ def format_baht(value):
     return f"{round_baht(value):,.0f}"
 
 def service_report_rates(rows, summary):
+    service_rate = float(summary.get("service_rate", 0) or summary.get("calculated_service_rate", 0) or 0)
+    if service_rate > 0:
+        full_rate = round_baht(service_rate)
+        return round_baht(full_rate * 0.50), full_rate
     derived_rates = []
     for row in rows:
         service_percent = float(row.get("service_percent", 0) or 0)
-        income_amount = round_baht(row.get("income_amount", 0))
-        if service_percent > 0 and income_amount > 0:
-            derived_rates.append(income_amount / (service_percent / 100.0))
+        gross_amount = round_baht(row.get("gross_service_amount", row.get("income_amount", 0)))
+        if service_percent > 0 and gross_amount > 0:
+            derived_rates.append(gross_amount / (service_percent / 100.0))
     full_rate = round_baht(derived_rates[0]) if derived_rates else round_baht(summary.get("service_rate", 0))
     return round_baht(full_rate * 0.50), full_rate
 
