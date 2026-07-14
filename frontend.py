@@ -2112,12 +2112,17 @@ def render_service_setup():
                 employee_pool = round_baht(summary.get("employee_pool", 0))
                 balance_returned = employee_pool - actual_paid
 
+                service_result_df = pd.DataFrame(recalculated_rows)
                 st.dataframe(
-                    pd.DataFrame(recalculated_rows)[[
-                        "emp_code", "employee_name", "department", "source", "gross_service", "sick_deduction",
+                    service_result_df[[
+                        "emp_code", "employee_name", "department", "source", "total_after_deduction", "sick_deduction",
                         "leave_day_deduction", "leave_hour_deduction", "late_deduction", "evaluation_deduction", "deposit_deduction", "net_service", "notes"
                     ]],
-                    use_container_width=True
+                    use_container_width=True,
+                    column_config={
+                        "total_after_deduction": st.column_config.NumberColumn("Paid Service Amount", format="%d"),
+                        "net_service": st.column_config.NumberColumn("Net Service", format="%d"),
+                    }
                 )
 
                 st.markdown("---")
