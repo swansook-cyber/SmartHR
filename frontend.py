@@ -319,9 +319,16 @@ def service_report_rates(rows, summary):
     return round_baht(full_rate * 0.50), full_rate
 
 def service_detail_report_html(reports, selected_month):
-    rows = reports.get("service_detail", [])
+    raw_rows = reports.get("service_detail", [])
     summary = reports.get("summary", {})
-    half_rate, full_rate = service_report_rates(rows, summary)
+    half_rate, full_rate = service_report_rates(raw_rows, summary)
+    rows = []
+    for row in raw_rows:
+        display_row = dict(row)
+        display_row["income_amount"] = round_baht(
+            display_row.get("total_after_deduction", display_row.get("income_amount", 0))
+        )
+        rows.append(display_row)
     title = f"Service Charge {selected_month['month']} {selected_month['year']}"
     printed_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     columns = [
